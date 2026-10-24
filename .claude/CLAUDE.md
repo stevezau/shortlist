@@ -91,9 +91,11 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   So, during the edit loop: `superpowers:test-driven-development`, then
   `pytest tests/unit/test_foo.py` or `-k <name>` — that file, nothing else. Never `pytest` bare,
   never `-m e2e`, never the whole `pnpm test`, until the work has settled.
-  At the END, once: `pytest`, `pnpm test`, `tsc -b --force`, `eslint .`, plus `-m e2e` when a UI flow
-  or the wizard changed. That pass is the bar before any commit — CI runs it all regardless, so a
-  green full pass immediately before the commit is what counts, not a green one mid-edit.
+  At the END, the full pass runs on GitHub, never locally (owner decision 2026-10-25): push the work
+  to a branch, then `gh workflow run ci.yml --ref <branch>`. CI runs everything anyway, sharded, in
+  ~6 min against ~17-35 here; publishing happens only on a `dev` push or a `v*` tag, so a branch run
+  ships nothing. A green branch run is the bar before pushing `dev`. Locally: scoped test files and
+  `ruff check . && ruff format --check .` only.
 - **One pytest at a time on this host.** Several agent sessions share it, and each run fans out to
   its xdist workers (`-n 2` by default) — four overlapping runs is four times that, which is the
   shape that took the plex host down (2026-09-12: 189 workers, ~30 GB into swap). A `PreToolUse` hook
