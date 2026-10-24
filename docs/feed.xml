@@ -5,8 +5,27 @@
   <link href="https://shortlistapp.dev/feed.xml" rel="self" type="application/atom+xml"/>
   <link href="https://shortlistapp.dev/" rel="alternate" type="text/html"/>
   <id>https://shortlistapp.dev/feed.xml</id>
-  <updated>2026-10-21T00:00:00Z</updated>
+  <updated>2026-10-25T00:00:00Z</updated>
   <author><name>Steven Adams</name></author>
+  <entry>
+    <title>Shortlist 1.13.0</title>
+    <link href="https://github.com/stevezau/shortlist/releases/tag/v1.13.0" rel="alternate" type="text/html"/>
+    <id>https://github.com/stevezau/shortlist/releases/tag/v1.13.0</id>
+    <updated>2026-10-25T00:00:00Z</updated>
+    <content type="text">### Added
+
+- **Choose which of a row's libraries it asks for titles for** ([#169](https://github.com/stevezau/shortlist/issues/169)).
+  In the row editor's **Requests** section, **Which libraries get requests** lists the row's libraries, each
+  with a switch. Turn TV Shows off and the row still asks for films but never for shows. Every library is on
+  by default, so nothing changes until you turn one off, and a library you add to Plex later starts on.
+  Titles already waiting in your inbox stay there until you send or dismiss them. Adds migration 0114.
+
+### Fixed
+
+- **A watch date in the future no longer pins a person's rows to one title** ([#162](https://github.com/stevezau/shortlist/issues/162)).
+  Plex can hold a last-watched date years ahead of today. Shortlist took it as the person's newest watch, so that title led their row every night and everything they really watched read as years old on the run page. A date more than a day ahead is now treated as unknown: a show takes the date of its newest watched episode instead, and the bad date is replaced at the next watch sync.
+- **"How we picked" now says how long before the run each watch was.** It used to count back from the person's newest watch, so someone who hadn't watched anything for a week saw every title a week short, and their last watch read "watched most recently" rather than "7 days ago". Runs from before this update keep the old labels.</content>
+  </entry>
   <entry>
     <title>Shortlist 1.12.2</title>
     <link href="https://github.com/stevezau/shortlist/releases/tag/v1.12.2" rel="alternate" type="text/html"/>
@@ -1664,72 +1683,5 @@ in it ships in 1.5.1; the notes are kept here because the images were briefly pu
   weighted purely by how recently something was watched, and a Plex rating can only ever _remove_ a
   seed, never mark one as liked. It now reads "Because you watched…", which is the fact we have.
   Reasons are written into each run as it happens, so runs already recorded keep the old wording.</content>
-  </entry>
-  <entry>
-    <title>Shortlist 1.2.0</title>
-    <link href="https://github.com/stevezau/shortlist/releases/tag/v1.2.0" rel="alternate" type="text/html"/>
-    <id>https://github.com/stevezau/shortlist/releases/tag/v1.2.0</id>
-    <updated>2026-08-05T00:00:00Z</updated>
-    <content type="text">A minor release with **one behaviour change** — read the first item below before upgrading if any of
-your rows are set to 0% already-watched, which is the default.
-
-### Changed
-
-- **A row set to 0% already-watched now also excludes shows someone has only STARTED.** It used to
-  exclude only shows they had _finished_, where "finished" meant 80% of the episodes or a
-  length-scaled floor of about three. So a series you were two episodes into was, as far as the row
-  was concerned, a fresh discovery — and could be recommended straight back to you. That was
-  reported, and it was doing exactly what it was told.
-
-  Plex draws no such line: its own watched filter returns a series from its first episode. A probe of
-  a real server found it returning shows as little as 1.1% watched (2 of 176), and on that server
-  five of ten started shows were still eligible to be suggested to the person watching them. At 0%,
-  started now means watched — the two agree.
-
-  **Rows above 0% are unchanged.** There the percentage is still a ceiling on _finished_ titles,
-  because "N% of the row" needs a definite line to mean anything. If you relied on the old
-  behaviour, set the cap above 0. Rows re-pick their titles on their own refresh night, so the change
-  reaches a row when it next rebuilds rather than immediately.
-
-- **"Only series they haven't started" is now offered on a films-and-shows row**, not just a
-  shows-only one. The API and the engine always accepted it there; the switch was hidden, so the
-  default row most installs have could never turn it on. On a 0% row it is now a no-op — that row
-  excludes started series anyway — and it still does real work on a row whose cap is above 0%.
-
-### Added
-
-- **"Have an issue?"** — a new page, replacing the sidebar's separate _Report a bug_ and _Copy
-  diagnostics_ buttons. It runs twenty-one read-only checks against your own server and, for most
-  problems, names the cause outright: which library refused someone's token, which setting actually
-  applied, why a row is short, whether Plex still matches what Shortlist thinks it delivered.
-
-  Nothing on the page changes anything — not your Plex server, not your rows, not your settings. The
-  checks stay off until you switch them on and switch themselves off again after 24 hours, because
-  they read share filters and per-user tokens. Every check has a **Copy for support** button, and
-  what it copies is shown on screen first so a paste holds no surprises. The last section files the
-  report: a pre-filled GitHub issue plus a diagnostic to attach, as a paste or a file. That
-  diagnostic masks credentials, IP addresses and your server's machine id. It is a good first pass
-  rather than a guarantee: logs carry whatever a dependency decided to print, so give the report a
-  skim before posting it publicly. It does name the people on your server by their Plex username —
-  replace those yourself if you'd rather not publish them.
-
-  If someone reports a problem on a server you don't administer, sending them there is usually faster
-  than a list of questions.
-
-### Fixed
-
-- **A downloaded log zip no longer carries your server's IP address or machine id.**
-  `Logs → Download` calls itself "the attachment for a bug report" and had only ever removed
-  credentials — so it shipped your Plex server's address on every line that recorded a call to it
-  (17,234 of them in one real export) and, where a collection write was logged, the machine id that
-  identifies your server. Both are now removed there and in the diagnostic report, which had the same
-  gap in the log files it bundles.
-
-  A URL keeps its scheme and port (`https://&lt;host&gt;:32400`) because those are the parts that answer a
-  question. The live Logs view is deliberately unchanged: it renders on your own screen, where your
-  server's address is what makes a line readable.
-
-- The documentation described a `recommendations.watched_show_pct` setting that has never existed.
-  The finished threshold is fixed in the engine; the docs now say so.</content>
   </entry>
 </feed>

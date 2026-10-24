@@ -297,6 +297,17 @@ class TestItemStateFromRealRows:
 
         assert state == ItemState(rating_key=1, media_type="episode", view_count=1)
 
+    def test_a_future_last_viewed_reads_as_undated(self):
+        """Issue #162: a stamp years ahead would be copied into a transferred row's true date, and
+        seed recency measured from it pins one title for ever. Undated rows are skipped there."""
+        import xml.etree.ElementTree as ET
+        from datetime import UTC, datetime
+
+        ahead = int(datetime.now(UTC).timestamp()) + 3750 * 86400
+        el = ET.fromstring(f'<Video ratingKey="1" viewCount="1" lastViewedAt="{ahead}"/>')
+
+        assert PlexClient._leaf_state(el, "movie").last_viewed_at == 0
+
 
 class TestTheRecordedResponses:
     """Replays `tests/fixtures/pms_*.xml.txt` through the real parser.

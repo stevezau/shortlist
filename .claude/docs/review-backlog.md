@@ -12,12 +12,6 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 **Dependency advisories (build-time only, never in the image):**
 
 - `braces`: no patched release yet (latest is 3.0.3). Re-run `pnpm -C web audit` and bump when one ships.
-- The CI check "requirements.lock covers pyproject dependencies" (ci.yml lint job) compares package NAMES
-  only. Dependabot's pip PRs bump `pyproject.toml` alone, so a bumped pin is never locked: authlib 1.9.1 was
-  pinned while the image still installed 1.8.0, and CI tested 1.9.1 (its `pip install -e .[dev]` upgrades past
-  the lock). Found by the v1.12.2 release review; the lock was regenerated in that release. Fix: also fail when a
-  locked version does not satisfy the pyproject specifier (needs `packaging` in the lint job), or have
-  Dependabot update the lock.
 
 **Engine tuning:**
 
@@ -34,6 +28,15 @@ reviewer who rediscovers a finding checks the history before fixing it again.
     SearXNG+Claude 5 -> 4, Exa+llama 4 -> 1). The 3x-sample local check was stopped unfinished. If it
     matters, try crediting history seeds at a lower scale than recent ones and replay.
   - `replay.py` gathers with "full", so its headline `in_row` is "full"; read `by_mode["scaled:0.7"]`.
+
+**Future watch dates (#162 leftovers, 2026-10-25):**
+
+- Every PMS reader now treats a stamp more than a day ahead as unknown (`_watch_stamp`), but `build_seeds`
+  (`history.py`, `newest = max(...)`) still trusts whatever it is given. A future `source_viewed_at` or
+  `watch_events.viewed_at` stored BEFORE the fix is never rewritten, and a new reader that skips `_watch_stamp`
+  reopens #162. A guard there needs a `now` passed in (the engine reads no clock).
+- The cutoff is this host's clock, not the PMS's. A Shortlist host more than a day behind its PMS would read
+  every fresh watch as undated, silently. A once-per-read warning with the rejected count would make it visible.
 
 **Test and structure leftovers:**
 
@@ -140,6 +143,15 @@ the first run after the upgrade, not from the row's whole history.
 ## CLOSED — the record
 
 Everything below is fixed, resolved or not a bug. Newest first, then older audits.
+
+---
+
+## CLOSED 2026-10-21 — the lock check compared names only
+
+- Found by the v1.12.2 release review: CI's lock check compared package NAMES, so Dependabot's pyproject-only
+  bump left authlib 1.9.1 pinned while the image shipped 1.8.0 (CI tested 1.9.1, its `pip install -e .[dev]`
+  upgrading past the lock). The lock was regenerated in 1.12.2; the check is now
+  `scripts/check_requirements_lock.py`, which fails when a locked version does not satisfy its requirement.
 
 ---
 

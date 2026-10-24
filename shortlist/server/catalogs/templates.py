@@ -67,6 +67,7 @@ ROW_INPUT_DEFAULTS: dict[str, object] = {
     "req_language_mode": None,
     "req_preferred_languages": None,
     "req_min_rating_other": None,
+    "req_skip_library_keys": None,
     "req_auto_user_tag": None,
     "seed_window": 1,
     "pick_order": "best",

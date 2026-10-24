@@ -1705,6 +1705,7 @@ def _record_history_trace(
     library_of_watch=lambda _item: "",
     library_of_seed=lambda _seed: "",
     ratings: RatingsPolicy | None = None,
+    run_at: datetime | None = None,
 ) -> None:
     """File the history/seeds/watched stage of the trace: the most recent watches, the seeds derived
     from them (every one that seeds any of ``specs``, `_seeds_fed`), and a watched summary. Display only.
@@ -1787,6 +1788,23 @@ def _record_history_trace(
             "rated": ratings.rated,
             "rated_human": ratings.rated_human,
         }
+    # How long before THIS RUN each seed was last watched. `recency_days` counts back from their newest
+    # watch instead (it is the weight's input), so labelled "days ago" it read every seed short by
+    # however long they had been away. Keyed as `build_seeds` groups. None when nothing dates the
+    # watch; absent on a direct engine call, which has no run time to count from.
+    last_watched: dict[tuple[str, MediaType], datetime] = {}
+    for item in history:
+        key = (item.title, item.media_type)
+        if item.watched_at and (key not in last_watched or item.watched_at > last_watched[key]):
+            last_watched[key] = item.watched_at
+    run_moment = _utc(run_at)
+
+    def days_ago(seed: Seed) -> int | None:
+        last = _utc(last_watched.get((seed.title, seed.media_type)))
+        if run_moment is None or last is None or last.year <= 1970:
+            return None
+        return max(0, (run_moment - last).days)
+
     report.trace["seeds"] = [
         {
             "title": s.title,
@@ -1798,6 +1816,7 @@ def _record_history_trace(
             # ago" instead of an opaque bar — this is what makes the influence bar legible.
             "watch_count": s.watch_count,
             "recency_days": s.recency_days,
+            **({"days_ago": days_ago(s)} if run_moment is not None else {}),
         }
         for s in sorted(seeds, key=lambda s: s.weight, reverse=True)
     ]
@@ -3059,6 +3078,7 @@ def _warm_start(
         library_of_watch=library_of_watch,
         library_of_seed=library_of_seed,
         ratings=policy.ratings,
+        run_at=ctx.run_at,
     )
     _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": report.counts.seeds})
     for spec in specs:  # build every row's pool up front so counts and demand see them all
@@ -3075,6 +3095,37 @@ def _warm_start(
     if demand is not None:
         _record_demand(policy, demand)
     report.status = "ok"
+
+
+def requestable_in_enabled_libraries(
+    missing: list[Candidate], group_sections: list, row_targets: list, skipped: frozenset[str]
+) -> list[Candidate]:
+    """The missing titles a row may still ask for once the owner has turned some of its libraries off (#169).
+
+    ``group_sections`` are the libraries of the one group that surfaced ``missing``; ``row_targets`` are all
+    the row's. For a title of media type T:
+
+    - The group holds a library of type T: keep it while one of those is still on.
+    - The group holds none of type T: keep it only when the row has a library of type T and NONE of them is
+      skipped. After a #162 split the main group keeps the unchanged spec, so its pool spans every library's
+      seeds and carries titles of types it holds no library for. Those are also surfaced by the split groups
+      that do hold the type, so a title is asked for here only when no library of its type is off (a show led
+      to by a TV watch must not go through the main group just because Anime is on), and never when the row
+      has no library of the type at all.
+
+    Only called when something is skipped, so a row with nothing turned off never reaches it.
+    """
+    kept = []
+    for c in missing:
+        in_group = [s for s in group_sections if section_kind(s) is c.media_type]
+        if in_group:
+            wanted = any(str(s.key) not in skipped for s in in_group)
+        else:
+            in_row = [s for s in row_targets if section_kind(s) is c.media_type]
+            wanted = bool(in_row) and all(str(s.key) not in skipped for s in in_row)
+        if wanted:
+            kept.append(c)
+    return kept
 
 
 def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
@@ -3104,10 +3155,19 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         if spec.theme is not None:
             # An AI row (#138) is library-only: titles it names that the server lacks are never requested.
             continue
-        groups = policy.library_groups(spec, target_sections(ctx.delivery_sections, spec))
-        gathers = [pools[0] for s, _ in groups if (pools := policy.pools_for(s)) is not None]
+        row_targets = target_sections(ctx.delivery_sections, spec)
+        groups = policy.library_groups(spec, row_targets)
+        gathers = [
+            (group_sections, pools[0]) for s, group_sections in groups if (pools := policy.pools_for(s)) is not None
+        ]
         if not gathers:
             continue
+        # Only keys that are still one of the row's libraries: a deleted library's stale key must not narrow it.
+        skipped = (
+            frozenset(spec.request_overrides.skip_library_keys) & {str(s.key) for s in row_targets}
+            if spec.request_overrides
+            else frozenset()
+        )
         # The row's own name (the same one the user sees), so the inbox can say WHICH row a
         # request came from. Fill the placeholders the template may carry.
         row_template = resolve_row_template(spec, user, cfg)
@@ -3123,7 +3183,12 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         row_tags = title_tags.setdefault(spec.slug, {})
         row_why = title_why.setdefault(spec.slug, {})
         limits = spec.limits()
-        missing = [c for gathered in gathers for c in requests_mod.collect_missing(gathered, policy.library_index)]
+        missing = []
+        for group_sections, gathered in gathers:
+            group_missing = requests_mod.collect_missing(gathered, policy.library_index)
+            if skipped:
+                group_missing = requestable_in_enabled_libraries(group_missing, group_sections, row_targets, skipped)
+            missing.extend(group_missing)
         if limits.active:
             # A title the row's limits would never show is not this row's to ask for. Year and rating only:
             # runtime needs a TMDB lookup per title, and a missing title is not worth one.

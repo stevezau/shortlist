@@ -1451,4 +1451,51 @@ describe("TraceView — the stage counts", () => {
     expect(screen.getAllByText("watched most recently")).toHaveLength(1);
     expect(screen.getByText("4 days ago")).toBeInTheDocument();
   });
+
+  it("counts days back from the run when the run recorded it, not from their newest watch", () => {
+    // Their newest watch was 9 days before the run: `recency_days` says 0 and 30, which read as
+    // "watched most recently" and "30 days ago" for titles last seen 9 and 39 days ago.
+    const base = funnelTrace();
+    const seeds = base.trace?.seeds ?? [];
+    const data = {
+      ...base,
+      trace: {
+        ...base.trace,
+        seeds: [
+          { ...seeds[0], recency_days: 0, days_ago: 9 },
+          { ...seeds[1], recency_days: 0, days_ago: 9 },
+          { ...seeds[2], recency_days: 30, days_ago: 39 },
+        ],
+      },
+    } as RunUserTraceResponse;
+
+    render(<TraceView data={data} />);
+
+    expect(screen.getAllByText("9 days ago")).toHaveLength(1);
+    expect(screen.getByText("39 days ago")).toBeInTheDocument();
+    expect(screen.queryByText("watched most recently")).not.toBeInTheDocument();
+    expect(screen.queryByText("30 days ago")).not.toBeInTheDocument();
+  });
+
+  it("says today and yesterday, and nothing for a watch with no date", () => {
+    const base = funnelTrace();
+    const seeds = base.trace?.seeds ?? [];
+    const data = {
+      ...base,
+      trace: {
+        ...base.trace,
+        seeds: [
+          { ...seeds[0], days_ago: 0 },
+          { ...seeds[1], days_ago: 1 },
+          { ...seeds[2], recency_days: 5000, days_ago: null },
+        ],
+      },
+    } as RunUserTraceResponse;
+
+    render(<TraceView data={data} />);
+
+    expect(screen.getByText("today")).toBeInTheDocument();
+    expect(screen.getByText("yesterday")).toBeInTheDocument();
+    expect(screen.queryByText("5000 days ago")).not.toBeInTheDocument();
+  });
 });

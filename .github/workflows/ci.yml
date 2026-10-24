@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install ruff packaging
       - run: ruff check .
       - run: ruff format --check .
       # A migration already applied to a database is never replayed there, so an edit to one reaches
@@ -47,41 +47,11 @@ jobs:
       # what blocked the v1.7.0 release PR with every check green.
       - name: No merged migration's content has changed
         run: python scripts/check_migration_freeze.py
-      # Catches "added a dependency to pyproject.toml but forgot to regenerate the lock" — which
-      # would otherwise only surface as an ImportError inside the built image. Deliberately checks
-      # COVERAGE, not equality with a fresh resolution: re-resolving would report drift every time
-      # any upstream package publishes, which would be noise rather than signal.
-      - name: requirements.lock covers pyproject dependencies
-        run: |
-          python - <<'PY'
-          import re, sys, tomllib
-
-          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
-          # The extras the Dockerfile bundles into the image; `dev` is intentionally not locked.
-          shipped = ("anthropic", "openai", "google", "posters")
-          declared = list(project["dependencies"])
-          for extra in shipped:
-              declared += project.get("optional-dependencies", {}).get(extra, [])
-
-          def norm(name: str) -> str:
-              return re.split(r"[<>=!~\[; ]", name, maxsplit=1)[0].strip().lower().replace("_", "-")
-
-          want = {norm(d) for d in declared}
-          have = {
-              norm(line)
-              for line in open("requirements.lock")
-              if "==" in line and not line.lstrip().startswith("#")
-          }
-
-          missing = sorted(want - have)
-          if missing:
-              sys.exit(
-                  "requirements.lock is stale — missing: "
-                  + ", ".join(missing)
-                  + "\nRegenerate it with the command in .claude/CLAUDE.md"
-              )
-          print(f"lock covers all {len(want)} declared runtime dependencies")
-          PY
+      # The image installs requirements.lock, so a dependency added or bumped in pyproject.toml without
+      # regenerating the lock never reaches users: a missing one is an ImportError inside the built image, a
+      # bumped one ships the old version (authlib, v1.12.2 — Dependabot's pip PRs bump pyproject alone).
+      - name: requirements.lock satisfies pyproject dependencies
+        run: python scripts/check_requirements_lock.py
 
   docs:
     name: Website

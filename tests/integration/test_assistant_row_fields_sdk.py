@@ -81,6 +81,7 @@ ROW_CASES = {
         "req_language_mode": "prefer",
         "req_preferred_languages": ["en", "fr"],
         "req_min_rating_other": 9.0,
+        "req_skip_library_keys": ["2", "5"],
         "req_auto_user_tag": True,
     },
     "rewatch": {"rewatch": True, "rewatch_cooldown_days": 60},
@@ -134,6 +135,7 @@ NULL_FIELDS = {
     "req_language_mode",
     "req_preferred_languages",
     "req_min_rating_other",
+    "req_skip_library_keys",
     "req_auto_user_tag",
     "theme_days",
     "refresh_share",
@@ -177,7 +179,7 @@ def _assert_readback(wire, app, row_id, expected):
 def test_row_field_cases_cover_the_entire_advertised_writable_contract():
     covered = set(BASE) | {"name"} | set().union(*(set(case) for case in ROW_CASES.values()))
     assert covered == set(ROW_FIELD_DEFINITIONS)
-    assert len(covered) == 75
+    assert len(covered) == 76
     assert not {"id", "slug", "dry_run", "defer_rename", "poster_upload"} & covered
 
 

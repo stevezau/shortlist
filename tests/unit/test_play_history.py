@@ -200,3 +200,15 @@ class TestNotificationSocketUrl:
         client._server._baseurl = "https://pms.example.com:32400"
 
         assert client.notification_socket_url().startswith("wss://")
+
+
+class TestAFuturePlayIsNotAPlay:
+    def test_a_play_dated_in_the_future_is_dropped(self):
+        """Issue #162: a `viewedAt` years ahead is not when anyone watched. Kept, it would count as
+        "after" every delivery when crediting picks, and become a transferred row's true date."""
+        import xml.etree.ElementTree as ET
+
+        ahead = int(datetime.now(UTC).timestamp()) + 3750 * 86400
+        el = ET.fromstring(f'<Video accountID="1" ratingKey="2" type="movie" viewedAt="{ahead}"/>')
+
+        assert PlexClient._play_event(el) is None

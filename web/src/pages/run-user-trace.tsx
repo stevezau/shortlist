@@ -1317,10 +1317,17 @@ function WatchList({ watched }: { watched: TraceWatch[] }) {
   );
 }
 
-/** "3 days ago" from the recency ingredient — or "" on legacy runs that lack it. Frequency
+/** "3 days ago", counted back from the run. Older runs recorded only `recency_days`, which counts
+ *  from their newest watch, so they keep the label that number can honestly carry. Frequency
  *  ("watched N×") is deliberately absent: watch count does not score a seed (recency alone does), so
  *  surfacing it here would imply a weighting we don't apply. */
 function seedWhy(s: TraceSeed): string {
+  if (s.days_ago !== undefined) {
+    if (s.days_ago === null) return "";
+    if (s.days_ago === 0) return "today";
+    if (s.days_ago === 1) return "yesterday";
+    return `${s.days_ago} days ago`;
+  }
   if (s.recency_days === undefined) return "";
   return s.recency_days <= 0
     ? "watched most recently"

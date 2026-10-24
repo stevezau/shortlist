@@ -6,6 +6,22 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-25
+
+### Added
+
+- **Choose which of a row's libraries it asks for titles for** ([#169](https://github.com/stevezau/shortlist/issues/169)).
+  In the row editor's **Requests** section, **Which libraries get requests** lists the row's libraries, each
+  with a switch. Turn TV Shows off and the row still asks for films but never for shows. Every library is on
+  by default, so nothing changes until you turn one off, and a library you add to Plex later starts on.
+  Titles already waiting in your inbox stay there until you send or dismiss them. Adds migration 0114.
+
+### Fixed
+
+- **A watch date in the future no longer pins a person's rows to one title** ([#162](https://github.com/stevezau/shortlist/issues/162)).
+  Plex can hold a last-watched date years ahead of today. Shortlist took it as the person's newest watch, so that title led their row every night and everything they really watched read as years old on the run page. A date more than a day ahead is now treated as unknown: a show takes the date of its newest watched episode instead, and the bad date is replaced at the next watch sync.
+- **"How we picked" now says how long before the run each watch was.** It used to count back from the person's newest watch, so someone who hadn't watched anything for a week saw every title a week short, and their last watch read "watched most recently" rather than "7 days ago". Runs from before this update keep the old labels.
+
 ## [1.12.2] - 2026-10-21
 
 ### Fixed

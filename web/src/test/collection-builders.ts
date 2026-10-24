@@ -61,6 +61,7 @@ export function fullCollection(patch: Partial<Collection> = {}): Collection {
     req_language_mode: null,
     req_preferred_languages: null,
     req_min_rating_other: null,
+    req_skip_library_keys: null,
     seed_window: 1,
     pick_order: "best",
     placement: "both",

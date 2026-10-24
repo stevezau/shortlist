@@ -1108,6 +1108,10 @@ class RequestOverrides:
     min_rating_other: float | None = None
     # Appended last, per the positional hazard above.
     season_count: int | None = None
+    # Keys of the row's libraries whose titles this row must NOT request (#169). An exclusion list so a
+    # library added to Plex later is on by default. It has no global and `resolve_request_config` does not
+    # read it: `rows._record_demand` applies it, where demand is produced.
+    skip_library_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

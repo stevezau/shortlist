@@ -91,6 +91,7 @@ COLLECTION_KEYS = {
     "req_language_mode",
     "req_preferred_languages",
     "req_min_rating_other",
+    "req_skip_library_keys",
     "req_auto_user_tag",
     "pick_order",
     "placement",

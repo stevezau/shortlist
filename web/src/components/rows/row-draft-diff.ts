@@ -38,6 +38,7 @@ const LABELS: Partial<Record<Key, string>> = {
   season_after_days: "Seasons",
   fallback_name: "Name for someone who's new",
   ai_instructions: "AI instructions",
+  req_skip_library_keys: "Which libraries get requests",
 };
 
 const AI_INSTRUCTIONS_MODE: Record<CollectionInput["ai_instructions"]["mode"], string> = {

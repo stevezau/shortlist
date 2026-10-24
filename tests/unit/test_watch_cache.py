@@ -1098,3 +1098,53 @@ class TestAMarkedWatchedShowGetsItsRealDate:
             row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=9).one()
             assert row.viewed_leaf_count == 8, "a failed date read lost the count too"
             assert abs((row.viewed_at.replace(tzinfo=UTC) - old).total_seconds()) < 1
+
+
+class TestAFutureDateIsNeverKept:
+    """A row cached with a watch date in the future, from before the reader stopped believing them.
+
+    One reporter's server dated a show ~10 years ahead (issue #162). Seed recency is measured from
+    the newest watch, so that one date made every real watch look a decade old and pinned the same
+    seed every night. Both guards that keep a cached date over an incoming one would otherwise keep
+    the bad date for ever, now that the reader hands back something older in its place.
+    """
+
+    _FUTURE = datetime.now(UTC) + timedelta(days=3750)
+
+    def _sync(self, cache, sessions, user_id, items):
+        with sessions() as session:
+            cache.sync_section(
+                session,
+                profile(),
+                user_id,
+                SECTION,
+                MediaType.SHOW,
+                lambda since: WatchedRead(items=list(items), covers_window=True),
+                force_full=True,
+                reconcile=True,
+            )
+            session.commit()
+
+    def _viewed_at(self, sessions, user_id, rating_key):
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=rating_key).one()
+            return row.viewed_at.replace(tzinfo=UTC)
+
+    def test_an_unchanged_show_takes_its_real_date_over_a_cached_future_one(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        self._sync(cache, sessions, user_id, [show("Ahead", rating_key=5, viewed=8, leaf=8, watched_at=self._FUTURE)])
+
+        real = datetime.now(UTC) - timedelta(days=3)
+        self._sync(cache, sessions, user_id, [show("Ahead", rating_key=5, viewed=8, leaf=8, watched_at=real)])
+
+        assert abs((self._viewed_at(sessions, user_id, 5) - real).total_seconds()) < 1
+
+    def test_the_epoch_replaces_a_cached_future_date(self, sessions, user_id):
+        """Unknown is the honest answer once nothing can date it, and it weighs zero as a seed."""
+        cache = WatchCache(sessions)
+        self._sync(cache, sessions, user_id, [show("Ahead", rating_key=6, viewed=8, leaf=8, watched_at=self._FUTURE)])
+
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        self._sync(cache, sessions, user_id, [show("Ahead", rating_key=6, viewed=8, leaf=8, watched_at=epoch)])
+
+        assert self._viewed_at(sessions, user_id, 6) == epoch

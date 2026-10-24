@@ -218,6 +218,7 @@ and NULL always means "inherit the global `requests.*` setting".
 | `req_language_mode`             | `requests.language_mode` — a kids row can be English-only while an anime row stays on `any`                                                                             |
 | `req_preferred_languages`       | `requests.preferred_languages` — JSON, so `[]` (cleared) stays distinct from NULL (inherit)                                                                             |
 | `req_min_rating_other`          | `requests.min_rating_other`. NULL inherits the global, which may itself be "follow the floor" — in which case this row derives from ITS OWN `req_min_rating`            |
+| `req_skip_library_keys`         | no global: JSON list of the row's library keys it does NOT request titles for. NULL or `[]` = all of them, and a library added to Plex later is on by default |
 | `req_auto_user_tag`             | `requests.auto_user_tag`                                                                                                                                                |
 
 `requests.enabled`, `requests.rating_source`, `requests.mdblist.apikey`, `requests.max_per_run` and
