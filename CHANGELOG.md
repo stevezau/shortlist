@@ -6,6 +6,14 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **Choose which of a row's libraries it asks for titles for** ([#169](https://github.com/stevezau/shortlist/issues/169)).
+  In the row editor's **Requests** section, **Which libraries get requests** lists the row's libraries, each
+  with a switch. Turn TV Shows off and the row still asks for films but never for shows. Every library is on
+  by default, so nothing changes until you turn one off, and a library you add to Plex later starts on.
+  Titles already waiting in your inbox stay there until you send or dismiss them. Adds migration 0114.
+
 ### Fixed
 
 - **A watch date in the future no longer pins a person's rows to one title** ([#162](https://github.com/stevezau/shortlist/issues/162)).

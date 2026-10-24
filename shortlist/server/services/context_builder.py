@@ -272,6 +272,7 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
         language_mode=row_language_mode_or_inherit(collection.req_language_mode),
         preferred_languages=row_languages_or_inherit(collection.req_preferred_languages),
         min_rating_other=collection.req_min_rating_other,
+        skip_library_keys=tuple(collection.req_skip_library_keys or ()),
     )
     return overrides if overrides != RequestOverrides() else None
 

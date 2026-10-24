@@ -92,6 +92,7 @@ export function toInput(collection: Collection): CollectionInput {
     req_language_mode: collection.req_language_mode ?? null,
     req_preferred_languages: collection.req_preferred_languages ?? null,
     req_min_rating_other: collection.req_min_rating_other ?? null,
+    req_skip_library_keys: collection.req_skip_library_keys ?? null,
     req_auto_user_tag: collection.req_auto_user_tag ?? null,
     seed_window: collection.seed_window ?? 1,
     pick_order: collection.pick_order ?? "best",

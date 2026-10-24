@@ -834,6 +834,17 @@ class TestBuildRequests:
         zero = Collection(slug="r", name="R", build="per_person", req_sonarr_monitor="lastSeason", req_season_count=0)
         assert row_request_overrides(zero).season_count is None
 
+    def test_skipped_libraries_reach_the_overrides_and_alone_they_are_an_override(self):
+        from shortlist.server.db.models import Collection
+        from shortlist.server.services.context_builder import row_request_overrides
+
+        assert row_request_overrides(Collection(slug="r", name="R", build="per_person")) is None
+        assert (
+            row_request_overrides(Collection(slug="r", name="R", build="per_person", req_skip_library_keys=[])) is None
+        )
+        row = Collection(slug="r", name="R", build="per_person", req_skip_library_keys=["2", "5"])
+        assert row_request_overrides(row).skip_library_keys == ("2", "5")
+
     def test_a_row_count_without_a_row_mode_is_not_sent(self):
         """The editor shows such a row as inheriting the global, mode AND count — so the run must too.
         Otherwise an API or assistant write of the count alone asks for 5 seasons under a screen

@@ -1282,6 +1282,117 @@ class TestRequestsWiring:
         # Distinct-union candidate count spans both pools: {10,20} (similar) and {30} (discover).
         assert report.users[0].counts.candidates == 3
 
+    def _demand_of_a_both_row(self, ctx: EngineContext, mock_plextv, monkeypatch, overrides) -> set:
+        """Run one movies-and-TV row whose pool surfaces a missing film (30) and a missing show (40)."""
+        from shortlist.engine.models import ArrTarget, RequestConfig, RequestReport
+
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        shows = MagicMock(type="show", key="2", title="TV Shows")
+        for section in (movies, shows):
+            section.collections.return_value = []
+        ctx.plex.sections.return_value = [movies, shows]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        ctx.delivery_sections = [movies, shows]
+        ctx.plex.build_library_index.return_value = {900: 999, 901: 998}
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 30, "title": "Missing Film", "genre_ids": [], "vote_average": 8.4, "vote_count": 800}]
+            if mt is MediaType.MOVIE
+            else [{"id": 40, "name": "Missing Show", "genre_ids": [], "vote_average": 8.4, "vote_count": 800}]
+        )
+        ctx.history_source.fetch.return_value = [
+            *[make_watched("Seed Film", days_ago=i, rating_key=999) for i in range(1, 4)],
+            *[make_watched("Seed Show", days_ago=i, rating_key=998, media_type=MediaType.SHOW) for i in range(1, 4)],
+        ]
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="Picked", size=5, media="both", request_overrides=overrides)
+        ]
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+        )
+        captured = {}
+
+        def spy(cfg, tmdb, demand, **kw):
+            captured["demand"] = demand
+            return RequestReport()
+
+        monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", spy)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        return {row.slug: set(row.demand) for row in captured.get("demand", [])}.get("picked", set())
+
+    def test_a_row_with_every_library_on_requests_the_film_and_the_show(self, ctx, mock_plextv, monkeypatch):
+        got = self._demand_of_a_both_row(ctx, mock_plextv, monkeypatch, None)
+        assert got == {(30, MediaType.MOVIE), (40, MediaType.SHOW)}
+
+    def test_turning_the_tv_library_off_drops_the_show_and_keeps_the_film(self, ctx, mock_plextv, monkeypatch):
+        from shortlist.engine.models import RequestOverrides
+
+        got = self._demand_of_a_both_row(ctx, mock_plextv, monkeypatch, RequestOverrides(skip_library_keys=("2",)))
+        assert got == {(30, MediaType.MOVIE)}
+
+    def test_turning_every_library_off_requests_nothing_for_the_row(self, ctx, mock_plextv, monkeypatch):
+        from shortlist.engine.models import RequestOverrides
+
+        got = self._demand_of_a_both_row(ctx, mock_plextv, monkeypatch, RequestOverrides(skip_library_keys=("1", "2")))
+        assert got == set()
+
+    def test_a_library_split_off_a_row_does_not_leak_its_seeds_into_the_main_groups_requests(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """TV Shows and Anime share a type, so #162 splits them off; the row's own group keeps the unchanged
+        spec (every library's seeds) over Movies alone. With TV Shows off, a show only a TV watch led to must
+        not be requested through that group just because Anime is still on."""
+        from shortlist.engine.models import ArrTarget, RequestConfig, RequestOverrides, RequestReport
+
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        tv = MagicMock(type="show", key="2", title="TV Shows")
+        anime = MagicMock(type="show", key="3", title="Anime")
+        for section in (movies, tv, anime):
+            section.collections.return_value = []
+        ctx.plex.sections.return_value = [movies, tv, anime]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: tv}
+        ctx.delivery_sections = [movies, tv, anime]
+        indexes = {id(movies): {600: 9600}, id(tv): {800: 9800}, id(anime): {700: 9700}}
+        ctx.plex.build_library_index.side_effect = lambda sec: indexes[id(sec)]
+        leads_to = {600: (30, "title"), 800: (40, "name"), 700: (50, "name")}
+
+        def suggest(tid, mt):
+            found, key = leads_to[tid]
+            return _ranked([{"id": found, key: f"t{found}", "genre_ids": [], "vote_average": 8.4, "vote_count": 800}])
+
+        ctx.tmdb.suggestions.side_effect = suggest
+        ctx.history_source.fetch.return_value = [
+            make_watched("Seed Film", days_ago=1, rating_key=9600),
+            make_watched("TV Watch", days_ago=2, rating_key=9800, media_type=MediaType.SHOW),
+            make_watched("Anime Watch", days_ago=3, rating_key=9700, media_type=MediaType.SHOW),
+        ]
+        ctx.config.min_history = 1
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        captured = {}
+
+        def spy(cfg, tmdb, demand, **kw):
+            captured["demand"] = demand
+            return RequestReport()
+
+        monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", spy)
+
+        def demand_with(overrides):
+            ctx.config.rows = [
+                RowSpec(slug="picked", name_template="Picked", size=5, media="both", request_overrides=overrides)
+            ]
+            pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+            return {row.slug: {k[0] for k in row.demand} for row in captured["demand"]}.get("picked", set())
+
+        assert demand_with(None) == {30, 40, 50}
+        assert demand_with(RequestOverrides(skip_library_keys=("2",))) == {30, 50}
+
 
 class TestAutoUserTag:
     """The global "tag requests by person" switch and its per-row override.

@@ -492,6 +492,7 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   req_sonarr_monitor: "requests",
   req_season_count: "requests",
   req_language_mode: "requests",
+  req_skip_library_keys: "requests",
   req_preferred_languages: "requests",
   req_auto_user_tag: "requests",
   // No control today; they follow Settings (design §7).

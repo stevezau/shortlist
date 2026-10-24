@@ -14,7 +14,7 @@ import {
   RowRequestSettings,
   type RowRequestInput,
 } from "@/components/rows/row-request-settings";
-import type { Settings } from "@/lib/types";
+import type { PlexLibrary, Settings } from "@/lib/types";
 import { overrideName } from "@/test/override-name";
 
 const INHERITS: RowRequestInput = {
@@ -34,6 +34,7 @@ const INHERITS: RowRequestInput = {
   req_language_mode: null,
   req_preferred_languages: null,
   req_min_rating_other: null,
+  req_skip_library_keys: null,
   request_tag: "",
 };
 
@@ -60,6 +61,7 @@ function renderSection(
     sonarrReady,
     media,
     audienceSize,
+    libraries,
   }: {
     requestsEnabled?: boolean;
     target?: "arr" | "overseerr";
@@ -67,6 +69,7 @@ function renderSection(
     sonarrReady?: boolean;
     media?: "movie" | "show" | "both";
     audienceSize?: number | null;
+    libraries?: PlexLibrary[] | null;
   } = {},
 ) {
   const set = vi.fn();
@@ -82,6 +85,7 @@ function renderSection(
         sonarrReady={sonarrReady}
         media={media}
         audienceSize={audienceSize}
+        libraries={libraries}
       />
     </MemoryRouter>,
   );
@@ -539,6 +543,108 @@ describe("RowRequestSettings", () => {
       renderSection({ req_auto_send: true, req_auto_user_tag: true });
       expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
       expect(screen.getAllByRole("switch").length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("which libraries get requests (#169)", () => {
+    const MOVIES = { key: "1", title: "Movies", type: "movie" } as PlexLibrary;
+    const KIDS = { key: "2", title: "Kids Movies", type: "movie" } as PlexLibrary;
+    const SHOWS = { key: "3", title: "TV Shows", type: "show" } as PlexLibrary;
+    const NOTE_PARTIAL = /Titles already waiting in your inbox stay there/;
+    const NOTE_ALL = /This row won.t ask for anything/;
+
+    it("shows every library switched on by default, each with its own label", () => {
+      renderSection({}, { libraries: [MOVIES, SHOWS] });
+      expect(screen.getByRole("switch", { name: /Movies/ })).toBeChecked();
+      expect(screen.getByRole("switch", { name: /TV Shows/ })).toBeChecked();
+      expect(screen.getByText("Asks Radarr")).toBeInTheDocument();
+      expect(screen.getByText("Asks Sonarr")).toBeInTheDocument();
+      expect(screen.queryByText(NOTE_PARTIAL)).toBeNull();
+      expect(screen.queryByText(NOTE_ALL)).toBeNull();
+    });
+
+    it("names Overseerr as where every library's requests go on that route", () => {
+      renderSection({}, { libraries: [MOVIES, SHOWS], target: "overseerr" });
+      expect(screen.getAllByText("Asks Overseerr")).toHaveLength(2);
+      expect(screen.queryByText("Asks Radarr")).toBeNull();
+    });
+
+    it("renders nothing for this field while the libraries are loading", () => {
+      renderSection({}, { libraries: null });
+      expect(screen.queryByText("Which libraries get requests")).toBeNull();
+      expect(radarrShown()).toBe(true);
+      expect(sonarrShown()).toBe(true);
+    });
+
+    it("writes the skipped key when a library is turned off, and null when it is turned back on", async () => {
+      const user = userEvent.setup();
+      const set = renderSection({}, { libraries: [MOVIES, SHOWS] });
+      await user.click(screen.getByRole("switch", { name: /TV Shows/ }));
+      expect(set).toHaveBeenCalledWith({ req_skip_library_keys: ["3"] });
+    });
+
+    it("writes null when the last skipped library is turned back on", async () => {
+      const user = userEvent.setup();
+      const set = renderSection(
+        { req_skip_library_keys: ["3"] },
+        { libraries: [MOVIES, SHOWS] },
+      );
+      expect(screen.getByRole("switch", { name: /TV Shows/ })).not.toBeChecked();
+      await user.click(screen.getByRole("switch", { name: /TV Shows/ }));
+      expect(set).toHaveBeenCalledWith({ req_skip_library_keys: null });
+    });
+
+    it("keeps a stored key that is no longer one of the row's libraries", async () => {
+      const user = userEvent.setup();
+      const set = renderSection(
+        { req_skip_library_keys: ["99"] },
+        { libraries: [MOVIES, SHOWS] },
+      );
+      expect(screen.queryByText(NOTE_PARTIAL)).toBeNull();
+      await user.click(screen.getByRole("switch", { name: /TV Shows/ }));
+      expect(set).toHaveBeenCalledWith({ req_skip_library_keys: ["99", "3"] });
+    });
+
+    it("tells you the inbox keeps its waiting titles when some, not all, are off", () => {
+      renderSection({ req_skip_library_keys: ["2"] }, { libraries: [MOVIES, KIDS] });
+      expect(screen.getByText(NOTE_PARTIAL)).toBeInTheDocument();
+      expect(screen.queryByText(NOTE_ALL)).toBeNull();
+    });
+
+    it("says the row asks for nothing when every library is off", () => {
+      renderSection({ req_skip_library_keys: ["1", "3"] }, { libraries: [MOVIES, SHOWS] });
+      expect(screen.getByText(NOTE_ALL)).toBeInTheDocument();
+      expect(screen.queryByText(NOTE_PARTIAL)).toBeNull();
+    });
+
+    it("handles a row with a single library", () => {
+      renderSection({ req_skip_library_keys: ["1"] }, { libraries: [MOVIES] });
+      expect(screen.getByRole("switch", { name: /Movies/ })).not.toBeChecked();
+      expect(screen.getByText(NOTE_ALL)).toBeInTheDocument();
+    });
+
+    it("hides the Radarr fields when no enabled library is a movie library", () => {
+      renderSection({ req_skip_library_keys: ["1", "2"] }, { libraries: [MOVIES, KIDS, SHOWS] });
+      expect(radarrShown()).toBe(false);
+      expect(sonarrShown()).toBe(true);
+    });
+
+    it("keeps the Radarr fields while one movie library is still on", () => {
+      renderSection({ req_skip_library_keys: ["2"] }, { libraries: [MOVIES, KIDS, SHOWS] });
+      expect(radarrShown()).toBe(true);
+    });
+
+    it("hides the Sonarr fields and the season choice when no enabled library is a show library", () => {
+      renderSection({ req_skip_library_keys: ["3"] }, { libraries: [MOVIES, SHOWS] });
+      expect(sonarrShown()).toBe(false);
+      expect(screen.queryByText("How much of a show this row grabs")).toBeNull();
+      expect(radarrShown()).toBe(true);
+    });
+
+    it("keeps today's field hiding when the libraries are not known", () => {
+      renderSection({ req_skip_library_keys: ["3"] }, { libraries: null, media: "movie" });
+      expect(sonarrShown()).toBe(false);
+      expect(radarrShown()).toBe(true);
     });
   });
 

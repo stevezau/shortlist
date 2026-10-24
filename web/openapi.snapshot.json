@@ -1310,6 +1310,21 @@
             ],
             "title": "Req Season Count"
           },
+          "req_skip_library_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Skip Library Keys"
+          },
           "req_sonarr_monitor": {
             "anyOf": [
               {
@@ -2086,6 +2101,21 @@
             "description": "How many seasons 'firstSeason'/'lastSeason' take for this row's requests; null inherits the global requests.season_count.",
             "title": "Req Season Count"
           },
+          "req_skip_library_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Keys of this row's libraries it does not request titles for; null or empty requests for all of them. A library added to Plex later is on by default.",
+            "title": "Req Skip Library Keys"
+          },
           "req_sonarr_monitor": {
             "anyOf": [
               {
@@ -2349,6 +2379,7 @@
           "req_season_count",
           "req_language_mode",
           "req_preferred_languages",
+          "req_skip_library_keys",
           "req_min_rating_other",
           "pick_order",
           "placement",

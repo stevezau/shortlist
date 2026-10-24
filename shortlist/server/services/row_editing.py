@@ -275,6 +275,8 @@ class CollectionIn(StrictRequestModel):
     # null inherits the owner's list; [] is a row that CLEARED its languages and means it (in "only"
     # mode it requests nothing). The two must stay distinct all the way to the column — see 0085.
     req_preferred_languages: list[str] | None = Field(default=None, max_length=50)
+    # Library keys this row does not request for (#169); null or empty requests for every library.
+    req_skip_library_keys: list[str] | None = Field(default=None, max_length=100)
     # null means "follow this row's own req_min_rating + 1.5", not "unset" — so a row that raises its
     # base floor carries this bar up with it.
     req_min_rating_other: float | None = Field(default=None, ge=0.0, le=10.0)
@@ -465,6 +467,9 @@ def validate_row(body: CollectionIn) -> None:
         # It is here so the stored value matches what every reader assumes, for anything that reaches
         # the column without going through those — a SQL query, a support bundle, a future consumer.
         body.req_preferred_languages = list(normalise_languages(body.req_preferred_languages))
+    if body.req_skip_library_keys is not None:
+        keys = (str(key).strip() for key in body.req_skip_library_keys)
+        body.req_skip_library_keys = list(dict.fromkeys(key for key in keys if key))
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")
     if body.placement_friends not in PLACEMENTS:
@@ -837,6 +842,7 @@ def serialize_row(
         "req_language_mode": row_language_mode_or_inherit(collection.req_language_mode),
         "req_preferred_languages": row_languages_or_inherit(collection.req_preferred_languages),
         "req_min_rating_other": collection.req_min_rating_other,
+        "req_skip_library_keys": list(collection.req_skip_library_keys or []) or None,
         "req_auto_user_tag": collection.req_auto_user_tag,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
@@ -1269,6 +1275,7 @@ REQUEST_COLUMNS = (
     "req_language_mode",
     "req_preferred_languages",
     "req_min_rating_other",
+    "req_skip_library_keys",
     "req_auto_user_tag",
 )
 

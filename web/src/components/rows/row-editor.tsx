@@ -1315,6 +1315,7 @@ export function RowEditor({
                     sonarrReady={readiness.sonarrReady}
                     media={input.media}
                     audienceSize={reach}
+                    libraries={landsIn}
                   />
                 </div>
               ) : (

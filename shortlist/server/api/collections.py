@@ -262,6 +262,12 @@ class CollectionOut(PassthroughModel):
             "requests.preferred_languages. An empty list is a row that cleared its languages."
         )
     )
+    req_skip_library_keys: list[str] | None = Field(
+        description=(
+            "Keys of this row's libraries it does not request titles for; null or empty requests for "
+            "all of them. A library added to Plex later is on by default."
+        )
+    )
     req_min_rating_other: float | None = Field(
         description=(
             "Rating another language must reach for this row to auto-send it. Null inherits the "

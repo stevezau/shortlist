@@ -260,6 +260,22 @@ class TestPerRowRequestSettingsApi:
         ).json()
         assert cleared["req_season_count"] is None
 
+    def test_a_rows_skipped_libraries_are_tidied_round_trip_and_clear(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        assert created["req_skip_library_keys"] is None
+
+        patched = client.patch(
+            f"/api/collections/{created['id']}",
+            json={"name": "Kids", "req_skip_library_keys": [" 2 ", "", "5", "2"]},
+        ).json()
+        assert patched["req_skip_library_keys"] == ["2", "5"]
+
+        for nothing in ([], None):
+            cleared = client.patch(
+                f"/api/collections/{created['id']}", json={"name": "Kids", "req_skip_library_keys": nothing}
+            ).json()
+            assert cleared["req_skip_library_keys"] is None
+
     @pytest.mark.parametrize("bad", [0, 100, -1])
     def test_a_season_count_outside_one_to_ninety_nine_is_refused(self, client: TestClient, bad: int):
         created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()

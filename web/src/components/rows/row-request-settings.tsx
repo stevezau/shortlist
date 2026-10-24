@@ -48,7 +48,7 @@ import {
 } from "@/lib/request-language";
 import type { RowSonarrMonitor } from "@/lib/sonarr-monitor";
 import { asSeasonCount } from "@/lib/sonarr-monitor";
-import type { Settings } from "@/lib/types";
+import type { PlexLibrary, Settings } from "@/lib/types";
 
 /** The subset of the row draft this section reads and writes. */
 export type RowRequestInput = {
@@ -68,8 +68,81 @@ export type RowRequestInput = {
   req_language_mode: RowLanguageMode;
   req_preferred_languages: string[] | null;
   req_min_rating_other: number | null;
+  req_skip_library_keys: string[] | null;
   request_tag: string;
 };
+
+/**
+ * Which of the row's libraries it asks for titles for. No "same as Settings" toggle: there is no global
+ * for this, so every library is simply on until the owner turns it off. Switches are for the row's own
+ * libraries only; a skipped key that is no longer one of them is left in the saved value untouched.
+ */
+function RequestLibraries({
+  libraries,
+  skipped,
+  target,
+  onChange,
+}: {
+  libraries: PlexLibrary[];
+  skipped: string[];
+  target?: "arr" | "overseerr";
+  onChange: (skipped: string[] | null) => void;
+}) {
+  // Where a library's requests go, not its type: a library is usually named after its type, so
+  // "Movies" under "Movies" said nothing.
+  const asks = (library: PlexLibrary) =>
+    target === "overseerr" ? "Asks Overseerr" : library.type === "movie" ? "Asks Radarr" : "Asks Sonarr";
+  const off = libraries.filter((library) => skipped.includes(library.key));
+  const toggle = (key: string, on: boolean) => {
+    const next = on ? skipped.filter((k) => k !== key) : [...skipped, key];
+    onChange(next.length > 0 ? next : null);
+  };
+  return (
+    <div className="space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
+      <p className="font-medium">Which libraries get requests</p>
+      <p className="text-sm text-muted-foreground">
+        When this row recommends something that isn&rsquo;t on your server yet,
+        Shortlist can ask for it. Turn a library off and this row stops asking
+        for titles meant for it &mdash; they won&rsquo;t wait in your inbox
+        either.
+      </p>
+      <ul className="space-y-2">
+        {libraries.map((library) => {
+          const id = `row-req-library-${library.key}`;
+          return (
+            <li
+              key={library.key}
+              className="flex items-center justify-between gap-4"
+            >
+              <Label htmlFor={id} className="flex flex-col gap-0.5 font-normal">
+                <span>{library.title}</span>
+                <span className="text-xs text-muted-foreground">
+                  {asks(library)}
+                </span>
+              </Label>
+              <Switch
+                id={id}
+                checked={!skipped.includes(library.key)}
+                onCheckedChange={(checked) => toggle(library.key, checked)}
+              />
+            </li>
+          );
+        })}
+      </ul>
+      {off.length === libraries.length ? (
+        <p className="text-sm text-muted-foreground">
+          This row won&rsquo;t ask for anything. What it recommends
+          doesn&rsquo;t change.
+        </p>
+      ) : off.length > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Titles already waiting in your inbox stay there until you send or
+          dismiss them.
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * One "leave on the global default, or override it here" field.
@@ -131,6 +204,7 @@ export function RowRequestSettings({
   sonarrReady,
   media,
   audienceSize,
+  libraries,
 }: {
   input: RowRequestInput;
   set: (patch: Partial<RowRequestInput>) => void;
@@ -148,14 +222,23 @@ export function RowRequestSettings({
   media?: "movie" | "show" | "both";
   /** How many people this row's audience holds, for the "never asks for anything" warning below. */
   audienceSize?: number | null;
+  /** The row's own libraries, or null while they load (or failed): the library switches then show
+   *  nothing and the Radarr/Sonarr fields follow `media` alone. */
+  libraries?: PlexLibrary[] | null;
 }) {
   // Overseerr/Seerr drives its own filing, so the fields for CHOOSING where a title lands (Radarr's
   // folder/profile, Sonarr's, and the request tag) can't do anything there — `requests.py:806-816`.
-  const hideRadarr = target === "overseerr" || radarrReady === false || media === "show";
-  const hideSonarr = target === "overseerr" || sonarrReady === false || media === "movie";
+  // A type with no library left switched on asks for nothing, so its fields could not do anything.
+  const skipped = input.req_skip_library_keys ?? [];
+  const enabled = libraries?.filter((library) => !skipped.includes(library.key)) ?? null;
+  const noEnabledMovies = enabled !== null && !enabled.some((library) => library.type === "movie");
+  const noEnabledShows = enabled !== null && !enabled.some((library) => library.type === "show");
+  const hideRadarr = target === "overseerr" || radarrReady === false || media === "show" || noEnabledMovies;
+  const hideSonarr = target === "overseerr" || sonarrReady === false || media === "movie" || noEnabledShows;
   const hideTag = target === "overseerr";
   // Both routes take a season choice; a Sonarr that isn't set up only matters when it is the route.
-  const hideShowSeasons = media === "movie" || (target !== "overseerr" && sonarrReady === false);
+  const hideShowSeasons =
+    media === "movie" || (target !== "overseerr" && sonarrReady === false) || noEnabledShows;
 
   const globalMinDemand =
     typeof settings?.["requests.min_demand"] === "number"
@@ -187,6 +270,15 @@ export function RowRequestSettings({
 
   return (
     <div className="space-y-4">
+      {libraries && libraries.length > 0 && (
+        <RequestLibraries
+          libraries={libraries}
+          skipped={skipped}
+          target={target}
+          onChange={(next) => set({ req_skip_library_keys: next })}
+        />
+      )}
+
       <RequestField
         label="How many this row may ask for"
         labelFor="row-req-max"

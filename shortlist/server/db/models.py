@@ -315,6 +315,9 @@ class Collection(Base):
     req_language_mode: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
     req_preferred_languages: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
     req_min_rating_other: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Keys of this row's libraries it must NOT request for (#169). An exclusion list, not an allow list,
+    # so a library added to Plex later is on by default. NULL and [] both mean nothing is skipped.
+    req_skip_library_keys: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
     # Tag this row's requests with the wanting person's slug, so the owner can see in Sonarr/Radarr
     # who a title was added for. NULL -> inherit the global `requests.auto_user_tag`.
     #

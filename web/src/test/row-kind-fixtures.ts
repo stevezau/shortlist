@@ -76,6 +76,7 @@ export const EVERY_OVERRIDE: Partial<Collection> = {
   req_language_mode: "prefer",
   req_preferred_languages: ["en", "fr"],
   req_min_rating_other: 8,
+  req_skip_library_keys: ["2"],
   req_auto_user_tag: false,
 };
 

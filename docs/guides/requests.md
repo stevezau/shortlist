@@ -355,6 +355,13 @@ request tag and "tag with who it's for" appear only when requests go to Radarr/S
 Overseerr/Jellyseerr has no tags field to carry them. If requests are off, the group is replaced by a
 note saying so, with a link to Settings.
 
+**Which libraries get requests** lists the row's libraries, each with a switch, all on by default. Turn
+one off and the row stops asking for titles meant for it: with TV Shows off, a row in Movies and TV Shows
+still asks for films but never for shows. It has no server default to follow. Titles already waiting in
+your inbox stay there until you send or dismiss them, and what the row recommends doesn't change. With
+every library off the row asks for nothing. When none of the libraries left on holds movies (or shows),
+the Radarr (or Sonarr) settings for the row are hidden.
+
 **How many people must want it** is counted within the row's own audience, so it can only ever be
 reached by a row that more than one person gets. Set it above 1 on a row whose audience is a single
 person and the editor warns you: any value above 1 there means the row will never ask for anything.

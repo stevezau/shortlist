@@ -4027,6 +4027,8 @@ export interface components {
             req_radarr_root_folder?: string | null;
             /** Req Season Count */
             req_season_count?: number | null;
+            /** Req Skip Library Keys */
+            req_skip_library_keys?: string[] | null;
             /**
              * Req Sonarr Monitor
              * @enum {unknown}
@@ -4324,6 +4326,11 @@ export interface components {
              * @description How many seasons 'firstSeason'/'lastSeason' take for this row's requests; null inherits the global requests.season_count.
              */
             req_season_count: number | null;
+            /**
+             * Req Skip Library Keys
+             * @description Keys of this row's libraries it does not request titles for; null or empty requests for all of them. A library added to Plex later is on by default.
+             */
+            req_skip_library_keys: string[] | null;
             /**
              * Req Sonarr Monitor
              * @description How much of a show Sonarr monitors for this row's requests (Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor.
