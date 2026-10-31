@@ -50,6 +50,13 @@ reviewer who rediscovers a finding checks the history before fixing it again.
   its own ratings). Cutting it means fewer per-item reloads in the engine (a product change, and it would speed
   real runs too) or a smaller fake library.
 
+**#173 review leftover (2026-11-01, LOW, pre-existing):**
+
+- `run_persistence._withdraw_unwatched` still withdraws a recent credit that rested only on the watched flag
+  when the show's watched episodes are deleted. Since #173 the read positively proves the play (the show
+  arrives as `played_earlier`), so keeping that credit would only need the `played_earlier` keys added to the
+  `latest_watch` skip-set. Not done in #173 because it predates it and #173 does not make it worse.
+
 ---
 
 ## LEFT ON PURPOSE
