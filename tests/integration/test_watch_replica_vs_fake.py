@@ -110,6 +110,23 @@ class TestTheShowReadSeesWhatUnwatchedZeroHides:
 
         assert SHOW_KEY not in {i.rating_key for i in read.items}
 
+    def test_a_show_whose_watched_episodes_were_deleted_still_comes_back(self, pms):
+        """Issue #173: the watched episodes are gone, so `viewedLeafCount` reads 0, but Plex still
+        records the show as played. The read asks for either, so it lands, with its real count of 0.
+        Read as anyone else it is not there: the show's own counters belong to the account."""
+        state, client, _episodes = pms
+        state.history.append(FakeHistoryEntry(account_id=1, rating_key=SHOW_KEY, viewed_at=1_700_000_000))
+        state.remove_watched_episodes(1, SHOW_KEY)
+        section = state.section_of(SHOW_KEY)
+
+        read = client.watched_titles(str(section.key), MediaType.SHOW, OWNER_TOKEN)
+        someone_else = client.watched_titles(str(section.key), MediaType.SHOW, TARGET_TOKEN)
+
+        found = {i.rating_key: i for i in read.items}
+        assert SHOW_KEY in found, "a show they watched read as untouched once its episodes were deleted"
+        assert (found[SHOW_KEY].viewed_leaf_count, found[SHOW_KEY].watch_count) == (0, 1)
+        assert SHOW_KEY not in {i.rating_key for i in someone_else.items}
+
     def test_a_show_the_read_cannot_date_takes_its_newest_EPISODE_date(self, pms):
         """The other half of the same Plex behaviour, end to end over real HTTP.
 

@@ -278,6 +278,37 @@ class FakePlexState:
         """Record that one account rated one title — what tapping the stars in Plex does."""
         self.user_ratings[(account_id, rating_key)] = rating
 
+    #: (account, show) pairs whose watched episodes were DELETED: the show keeps its own `viewCount` and
+    #: `lastViewedAt` while `viewedLeafCount` reads 0 (issue #173, measured:
+    #: `pms_show_counters_after_deleting_episodes.json`). Without it the fake cannot serve a show the
+    #: `unwatched=0` half finds and the `viewedLeafCount!=0` half misses, so the OR would be untested.
+    episodes_removed: set[tuple[int, int]] = field(default_factory=set)
+
+    def remove_watched_episodes(self, account_id: int, rating_key: int) -> None:
+        """This account watched some of the show, and those episode files have since been deleted."""
+        self.partial_shows[(account_id, rating_key)] = 0
+        self.episodes_removed.add((account_id, rating_key))
+
+    def show_counts(self, account_id: int, show: FakeMovie) -> tuple[int, bool]:
+        """What a show row says for one account: (`viewedLeafCount`, whether the show's own row says played).
+
+        The show's own row is what `unwatched=0` filters on and what carries `viewCount`. Marking a series
+        never establishes it (`invisible_to_show_read`, #108); deleting the watched episodes keeps it
+        (`episodes_removed`, #173).
+        """
+        # `FakeMovie.leaf_count` defaults to 0, and the show read filters on `viewedLeafCount != 0` — so a
+        # show seeded without an explicit leaf_count is invisible to it and the failure reads as a
+        # mystery. Loud here rather than puzzling three files away.
+        assert show.leaf_count, (
+            f"show {show.rating_key} ({show.title!r}) was seeded with leaf_count=0, so it can "
+            "never appear in a watched read — give it a real episode count"
+        )
+        viewed = min(self.partial_shows.get((account_id, show.rating_key), show.leaf_count), show.leaf_count)
+        played = show.rating_key not in self.invisible_to_show_read and (
+            viewed > 0 or (account_id, show.rating_key) in self.episodes_removed
+        )
+        return viewed, played
+
     def watch_episodes(self, account_id: int, rating_key: int, viewed: int) -> None:
         """This account has watched `viewed` of the show's episodes — a series in progress.
 
@@ -797,16 +828,11 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
             # case. `state.watch_episodes()` overrides it per account so the fake can also serve a
             # series IN PROGRESS, which is what `unwatched=0` mostly returns on a real server and the
             # only shape that tells `watched` and `finished` apart.
-            viewed = state.partial_shows.get((watched_by, movie.rating_key), movie.leaf_count)
-            # `FakeMovie.leaf_count` defaults to 0, and the show read now filters on
-            # `viewedLeafCount != 0` — so a show seeded without an explicit leaf_count is invisible to
-            # it and the failure reads as a mystery. Loud here rather than puzzling three files away.
-            assert movie.leaf_count, (
-                f"show {movie.rating_key} ({movie.title!r}) was seeded with leaf_count=0, so it can "
-                "never appear in a watched read — give it a real episode count"
-            )
-            element.set("viewedLeafCount", str(min(viewed, movie.leaf_count)))
+            viewed, played = state.show_counts(watched_by, movie)
+            element.set("viewedLeafCount", str(viewed))
             element.set("leafCount", str(movie.leaf_count))
+            if played:
+                element.set("viewCount", str(max(1, state.leaf_view(watched_by, movie.rating_key)[0])))
         else:
             # viewCount = how many times this account has this title in history (>= 1, since it's watched).
             plays, offset = state.leaf_view(watched_by, movie.rating_key)
@@ -1113,9 +1139,27 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             # Modelled because otherwise both answer from the same set, they can never disagree, and
             # the whole reason the read changed is unrepresentable here — the rule that a fake must
             # be no easier than the real server.
-            if query.get("viewedLeafCount!") is None:
-                watched -= state.invisible_to_show_read
-            listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
+            #
+            # `push=1&viewedLeafCount!=0&or=1&unwatched=0&pop=1` asks for EITHER (issue #173): a show
+            # whose watched episodes were deleted passes only `unwatched=0`. Ungrouped, the fake ANDs
+            # the filters; the real server answers that with garbage, never the union.
+            by_counts = query.get("viewedLeafCount!") is not None
+            by_show_row = query.get("unwatched") == "0"
+            either = by_counts and by_show_row and all(query.get(k) == "1" for k in ("push", "or", "pop"))
+
+            def in_read(item: FakeMovie) -> bool:
+                if item.media_type != "show":
+                    return True  # a film is in `watched` exactly when `unwatched=0` would return it
+                viewed, played = state.show_counts(account_id, item)
+                if either:
+                    return viewed > 0 or played
+                return (viewed > 0 or not by_counts) and (played or not by_show_row)
+
+            listing = [
+                item
+                for item in _sorted_items(list(items.values()), None)
+                if item.rating_key in watched and in_read(item)
+            ]
             # The INCREMENTAL read asks for `sort=lastViewedAt:desc` and stops client-side at the
             # first title older than its cutoff. It deliberately does NOT send a `lastViewedAt>=`
             # filter: real PMS 1.43.3 silently ignores that (live-probed 2026-07-30), and a fake that

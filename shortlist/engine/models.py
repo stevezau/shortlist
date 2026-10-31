@@ -155,6 +155,18 @@ class WatchedItem:
             return False
         return (self.viewed_leaf_count or 0) >= self.leaf_count
 
+    @property
+    def only_played_earlier(self) -> bool:
+        """A show Plex records as played, with none of the episodes now in the library watched.
+
+        What deleting the watched episodes leaves behind: the show keeps its own play count while
+        `viewedLeafCount` falls to 0 (issue #173, `pms_show_counters_after_deleting_episodes.json`). It
+        proves they started the show and nothing more: not how far in, not when (an Agregarr trailer
+        play leaves the same state once the trailer is cleaned up). So it may only ever mark a show as
+        started, never seed taste or count as finished — see `UserProfile.take_history`.
+        """
+        return self.media_type is MediaType.SHOW and self.viewed_leaf_count == 0
+
 
 @dataclass(frozen=True)
 class Seed:
@@ -396,6 +408,10 @@ class UserProfile:
     # moves, so renaming someone can't strand the exclusions that keep their row private.
     nickname: str = ""
     history: list[WatchedItem] = field(default_factory=list)
+    #: Shows they played whose watched episodes are no longer in the library (`WatchedItem.only_played_earlier`).
+    #: Kept OUT of `history`, which feeds taste, seeds and finished-title rules, and read only to mark
+    #: shows as started. Filled by `take_history`.
+    played_earlier: list[WatchedItem] = field(default_factory=list)
     #: Whether `history` came from a read that can be trusted to have returned EVERYTHING — the only
     #: thing that makes ABSENCE from it evidence. False by default, and deliberately so: withdrawing
     #: pick credit acts on absence and cannot be undone, so a caller that has not proved completeness
@@ -414,6 +430,11 @@ class UserProfile:
     def __post_init__(self) -> None:
         if not self.slug:
             self.slug = slugify(self.username)
+
+    def take_history(self, items: list[WatchedItem]) -> None:
+        """Store a fresh watched read, setting shows only played earlier aside in `played_earlier` (#173)."""
+        self.history = [item for item in items if not item.only_played_earlier]
+        self.played_earlier = [item for item in items if item.only_played_earlier]
 
     @property
     def display_name(self) -> str:

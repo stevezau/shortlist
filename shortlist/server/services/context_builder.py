@@ -715,7 +715,7 @@ class ContextBuilder:
         plex = PlexClient(plex_url, plex_token)
         plextv = PlexTvClient(plex_token, plex.machine_id)
         history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
-        profile.history = history.fetch(profile, min_completion=EngineConfig().min_completion)
+        profile.take_history(history.fetch(profile, min_completion=EngineConfig().min_completion))
         return profile
 
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:

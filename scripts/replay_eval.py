@@ -271,7 +271,8 @@ def main() -> None:
             user_id = user_ids.get(profile.plex_account_id)
             if user_id is None or remaining == 0:
                 continue
-            history = cache.watched_set(session, user_id)
+            # As a run sees it: shows only played earlier (#173) are never seeds, so never discoveries.
+            history = [w for w in cache.watched_set(session, user_id) if not w.only_played_earlier]
             keep: Callable = first_watch_keep(first_plays(session, profile.plex_account_id))
             limit = CASES_PER_USER if remaining is None else min(CASES_PER_USER, remaining)
             cases = holdout_cases(profile, history, max_holdouts=limit, keep=keep)

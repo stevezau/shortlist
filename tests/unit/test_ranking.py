@@ -871,6 +871,7 @@ class TestPoolKeyMatchesPoolExclusions:
         stub = object.__new__(RowPolicy)
         stub.watched_titles = watched_titles(watched_movies, watched_shows, 0.8)
         stub.watched_shows = watched_shows
+        stub.played_earlier = {50}  # a show whose watched episodes were deleted (#173)
         stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
 
         by_key: dict[tuple, set] = {}
@@ -913,11 +914,13 @@ class TestPoolKeyMatchesPoolExclusions:
         stub = object.__new__(RowPolicy)
         stub.watched_titles = watched_titles({949}, watched_shows, 0.8)
         stub.watched_shows = watched_shows
+        stub.played_earlier = {50}  # a show whose watched episodes were deleted (#173)
         stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
 
         zero_pct = stub.zero_pct_exclusions()
 
         assert started_shows(watched_shows) <= zero_pct
+        assert stub.started() <= zero_pct
 
 
 class TestRankAgainstPoolOrdersOnly:

@@ -457,6 +457,7 @@ class TestPoolAndRecipe:
         policy.cfg = engine_ctx.config
         policy.watched_titles = set()
         policy.watched_shows = {}
+        policy.played_earlier = set()
         return policy
 
     def test_a_rewatch_row_shares_the_unseen_pool_its_top_up_comes_from(self, engine_ctx):

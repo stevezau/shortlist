@@ -5160,14 +5160,20 @@ titles rather than the ~1k the history API returns.
 
 ### What "already watched" means for a show
 
-A movie is watched the moment it is played. A show has no such moment — Plex gives no show-level
-`viewCount`, only `viewedLeafCount` and `leafCount` — so every yes/no answer is a threshold over
-those two numbers, and **which threshold depends on where `recommendations.watched_pct` sits**:
+A movie is watched the moment it is played. A show has no such moment. Plex reports how many of its
+episodes a person has watched (`viewedLeafCount` of `leafCount`), so every yes/no answer is a
+threshold over those two numbers, and **which threshold depends on where `recommendations.watched_pct` sits**:
 
 | Cap                 | What it excludes                                                                                                                                                | A show they're 2 episodes into |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | `0.0` (the default) | Everything they've **touched** — any show with at least one watched episode. This is Plex's own answer; `unwatched=0` returns a series from its first episode.  | Excluded                       |
 | above `0.0`         | A ceiling on **finished** titles: at most that share of the row may be things they've completed. Unwatched titles still come first — it permits, never prefers. | Allowed (it isn't finished)    |
+
+A show also counts as touched when none of its episodes in the library are watched but Plex still
+records the show as played. That happens when the watched episodes are deleted: Plex keeps the show's
+own play count, while the episode count falls to 0. To make a show count as unstarted again, use
+**Mark as unwatched** on the whole series in Plex. Unmarking each episode one at a time leaves the
+show's play count behind, so Shortlist still treats the show as started.
 
 "Finished", used by the cap only, is `viewedLeafCount` against 80% of the episodes with a
 length-scaled floor (`max(3, 15%)`), so a long-running series someone is genuinely deep into isn't
@@ -5188,7 +5194,7 @@ drops started series anyway.
 ### Watched vs finished
 
 The dashboard reports both, and they are different questions. **Watched** is Plex's own flag: a film
-played, or a series with at least one finished episode. **Finished** is a film played, or a series
+played, or a series with at least one finished episode or a play Plex still records. **Finished** is a film played, or a series
 with **every** episode watched.
 
 The gap is not a rounding error. On a real 47-user server, of the 158 show picks credited as watched,

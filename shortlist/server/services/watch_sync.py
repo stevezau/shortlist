@@ -378,7 +378,7 @@ class WatchSync:
                 # a series whose show date lags its episodes. That is issue #108's own mechanism,
                 # left live on the path an owner reaches by pressing "Run now". The measured cost of
                 # reading complete is 27.4s against 27.3s, so there was nothing here to protect.
-                profile.history = self.refresh_watched(ctx, profile, force_full=True)
+                profile.take_history(self.refresh_watched(ctx, profile, force_full=True))
             except Exception as e:
                 logger.warning(
                     "run: could not pre-fill history for {} ({}) — the engine will read it directly",
@@ -478,7 +478,7 @@ class WatchSync:
                     # "mark as played" on a series leaves the show row with no `lastViewedAt`, which
                     # an incremental walk sorts behind its cutoff and drops, so a marked series was
                     # invisible until the weekly complete read (issue #108).
-                    profile.history = self.refresh_watched(ctx, profile, force_full=True, sweep_dead=sweep_dead)
+                    profile.take_history(self.refresh_watched(ctx, profile, force_full=True, sweep_dead=sweep_dead))
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
                 # Counted and emitted under one lock: people finish out of order, and the bar must

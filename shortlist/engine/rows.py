@@ -2258,6 +2258,9 @@ class RowPolicy:
     # cold-start history.
     watched_movies: set[int] = field(default_factory=set)
     watched_shows: dict[int, tuple[int, int | None]] = field(default_factory=dict)
+    # Shows Plex records as played with no episode watched now (`UserProfile.played_earlier`, #173).
+    # Started, so a 0% or unstarted-only row leaves them out; never finished, so nothing else reads them.
+    played_earlier: set[int] = field(default_factory=set)
     # (tmdb_id, media_type) -> release year, as Plex reported it for a cold-start filler. Only read by a
     # row's year limit; see `_cold_start_picks`.
     cold_years: dict[tuple[int, MediaType], int] = field(default_factory=dict)
@@ -2362,7 +2365,9 @@ class RowPolicy:
         row reach opposite verdicts about the same person, and the run trace (which reads the full
         history) disagree with both.
         """
-        return ratings_policy(self.user.history, self.cfg.dislike_threshold)
+        # Played-earlier shows (#173) included: a rating is the person's own whatever became of the
+        # episodes, and the user page judges trust over every cached rating, so the two must agree.
+        return ratings_policy([*self.user.history, *self.user.played_earlier], self.cfg.dislike_threshold)
 
     @property
     def disliked(self) -> set[tuple[int, MediaType]]:
@@ -2370,15 +2375,17 @@ class RowPolicy:
         return self.ratings.blocked
 
     def load_watched_breakdown(self) -> None:
-        """Fill ``watched_movies``/``watched_shows`` from this person's history.
+        """Fill ``watched_movies``/``watched_shows``/``played_earlier`` from this person's watched record.
 
-        Must run before any pool is built — `pool_exclusions` reads both.
+        Must run before any pool is built — `pool_exclusions` reads all three.
         """
-        for item in self.user.history:
+        for item in [*self.user.history, *self.user.played_earlier]:
             tid = item.tmdb_id if item.tmdb_id is not None else self.resolve(item)
             if tid is None:
                 continue
-            if item.media_type is MediaType.MOVIE:
+            if item.only_played_earlier:
+                self.played_earlier.add(tid)
+            elif item.media_type is MediaType.MOVIE:
                 self.watched_movies.add(tid)
             else:
                 # KEEP THE FURTHEST-WATCHED COPY, never simply the last one seen. A show held in two
@@ -2427,7 +2434,11 @@ class RowPolicy:
         also counts a show whose episode total Plex could not report at all. Dropping the latter would
         quietly re-admit those.
         """
-        return self.watched_titles | started_shows(self.watched_shows)
+        return self.watched_titles | self.started()
+
+    def started(self) -> set[tuple[int, MediaType]]:
+        """Shows this person has started: an episode watched now, or plays Plex still records (#173)."""
+        return started_shows(self.watched_shows) | {(tid, MediaType.SHOW) for tid in self.played_earlier}
 
     def pool_exclusions(self, spec: RowSpec) -> set[tuple[int, MediaType]] | None:
         """Titles this row's pool must not contain, or None when this row has no exclusion rule.
@@ -2453,7 +2464,7 @@ class RowPolicy:
         # Today the API refuses that combination, but a guard in another module is not what should be
         # keeping this correct.
         if spec.unstarted_only and spec.media != "movie":
-            excluded |= started_shows(self.watched_shows)
+            excluded |= self.started()
             rule = True
         return excluded if rule else None
 
@@ -3602,11 +3613,7 @@ def _warm_section_picks(
         keep_watched=spec.rewatch,
         # Independent of `pct`: see `_reusable_prior`. Movies are exempt because a movie with any
         # view is already finished, so "started" is not a distinct state there.
-        started=(
-            frozenset(started_shows(policy.watched_shows))
-            if spec.unstarted_only and spec.media != "movie"
-            else frozenset()
-        ),
+        started=(frozenset(policy.started()) if spec.unstarted_only and spec.media != "movie" else frozenset()),
         recently_finished=cooling,
         season=policy.season_titles(spec),
     )
@@ -4126,7 +4133,8 @@ def _run_user(
     # Reuse a history the CALLER already filled, exactly as the shared-row path does. The server
     # pre-fills it from its watched-title cache, which turns the run's second complete per-user read
     # of the night into a no-op; a direct engine run leaves it empty and reads here as before.
-    user.history = user.history or ctx.history_source.fetch(user, min_completion=cfg.min_completion)
+    if not user.history:
+        user.take_history(ctx.history_source.fetch(user, min_completion=cfg.min_completion))
     user_report.counts.history = len(user.history)
 
     # Decided BEFORE the policy is built, because a row set to skip a cold start is not this person's
@@ -4595,7 +4603,11 @@ def _shared_row(
         # Reuse the history _run_user already fetched (same min_completion) rather than re-fetching
         # it per shared row — that was S*A redundant Tautulli/PMS calls. Fall back to a fetch only
         # when it's empty (a user with genuinely none, or whose per-user pass errored before fetching).
-        user_history = user.history or ctx.history_source.fetch(user, min_completion=cfg.min_completion)
+        user_history = user.history or [
+            item
+            for item in ctx.history_source.fetch(user, min_completion=cfg.min_completion)
+            if not item.only_played_earlier
+        ]
         for item in user_history:
             tmdb_id = resolve(item)
             if tmdb_id is None:

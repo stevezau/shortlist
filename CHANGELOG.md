@@ -6,6 +6,17 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A show you'd started no longer comes back as new after its watched episodes are deleted**
+  ([#173](https://github.com/stevezau/shortlist/issues/173)). When the episodes someone watched are removed
+  from the library, Plex still records the show as played, but reports none of the remaining episodes as
+  watched. Shortlist only looked at the episodes, so a row set to **Already-watched titles: 0%** or **Only
+  series they have not started** could recommend that show again. Shortlist now also counts the show's own
+  play record. To make a show count as unstarted again, use **Mark as unwatched** on the whole series in Plex.
+  That includes a show whose Agregarr trailer someone played: once the trailer is cleaned up, Plex still
+  records the play, so those rows leave the show out for that person.
+
 ## [1.13.0] - 2026-10-25
 
 ### Added
