@@ -25,7 +25,7 @@ imply more confidence than it can carry.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from statistics import median
@@ -63,6 +63,7 @@ class RowTitle:
     from_web: bool
     #: The search found it, and only favourite or older watches' searches did: the share history adds.
     via_history: bool = False
+    year: int | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,8 @@ class ReplayOutcome:
     in_final_row_uncredited: bool = False
     #: The same pool ranked under each requested credit mode, by mode name.
     by_mode: dict[str, ModeResult] = field(default_factory=dict)
+    #: Release years of the in-library pool this case ranked, before any cut or truncation (None = undated).
+    pool_years: tuple[int | None, ...] = ()
 
     @property
     def hit(self) -> bool:
@@ -316,7 +319,10 @@ def replay_case(
     watched = {(w.tmdb_id, w.media_type) for w in case.history_before if w.tmdb_id is not None}
     history_keys = {(s.tmdb_id, s.media_type) for s in (*favourite_seeds, *older_seeds)}
 
+    pool_years: tuple[int | None, ...] = ()
+
     def build_row(candidates: list[Candidate], *, record_drops: bool) -> tuple[list[Candidate], list[Candidate]]:
+        nonlocal pool_years
         in_library = candidates_mod.filter_candidates(
             candidates,
             library_index,
@@ -324,6 +330,8 @@ def replay_case(
             excluded_genres=set(),
             dropped=dropped if record_drops else [],
         )
+        if record_drops:
+            pool_years = tuple(c.year for c in in_library)
         ranked = ranking.cut_for_recency(
             in_library,
             [MediaType.MOVIE, MediaType.SHOW],
@@ -338,6 +346,7 @@ def replay_case(
             RowTitle(
                 tmdb_id=c.tmdb_id,
                 media_type=c.media_type,
+                year=c.year,
                 from_web="llm_web" in c.sources,
                 via_history=bool(c.web_seeds)
                 and all((seed.tmdb_id, seed.media_type) in history_keys for seed in c.web_seeds),
@@ -381,6 +390,36 @@ def replay_case(
         rank_uncredited=rank_off,
         in_final_row_uncredited=any((c.tmdb_id, c.media_type) == key for c in final_off),
         by_mode=by_mode,
+        pool_years=pool_years,
+    )
+
+
+@dataclass(frozen=True)
+class YearStats:
+    """Release years of some titles: how old they run, and how many have no year at all."""
+
+    count: int
+    median: float | None
+    pct_before_2000: float
+    pct_before_1990: float
+    pct_undated: float
+
+
+def year_stats(years: Iterable[int | None]) -> YearStats:
+    """Median year and the share before 2000 / before 1990 / undated, each over ALL titles given."""
+    all_years = list(years)
+    dated = [y for y in all_years if y is not None]
+    total = len(all_years)
+
+    def share(n: int) -> float:
+        return n / total if total else 0.0
+
+    return YearStats(
+        count=total,
+        median=median(dated) if dated else None,
+        pct_before_2000=share(sum(y < 2000 for y in dated)),
+        pct_before_1990=share(sum(y < 1990 for y in dated)),
+        pct_undated=share(total - len(dated)),
     )
 
 

@@ -221,8 +221,9 @@ class CollectionIn(StrictRequestModel):
     # How long this row waits when its owner has watched nothing since it was built. 0 = never wait;
     # None -> inherit the global recommendations.idle_hold_days.
     idle_hold_days: int | None = Field(default=None, ge=0, le=MAX_REFRESH_DAYS)
-    # How much this row weights a title's release date. None -> inherit recommendations.recency.
-    recency: float | None = Field(default=None, ge=0.0, le=1.0)
+    # How much this row weights a title's release date: -1 leans older, 0 ignores age, 1 leans newer.
+    # None -> inherit recommendations.recency.
+    recency: float | None = Field(default=None, ge=-1.0, le=1.0)
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     # Long-time favourites and older watches the web search also looks up (#152); None -> inherit the global.
     favourite_count: int | None = Field(default=None, ge=0, le=10)

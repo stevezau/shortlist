@@ -6,6 +6,16 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **Lean towards older releases** ([#174](https://github.com/stevezau/shortlist/issues/174)). The
+  **Recent releases** slider now runs both ways. Left of the middle (**Older**) it gives older titles a
+  boost instead: at the far left a 40-year-old title scores about 32% higher than an equally good new
+  one, and nothing is boosted by more than 50%. The middle still ignores age and the right side works
+  as before, so no saved value changes meaning. It is a preference, not a filter: it only reorders
+  titles your sources already found, and a show's age is its first-air year. To rule eras out, use a
+  row's minimum and maximum year.
+
 ### Fixed
 
 - **A show you'd started no longer comes back as new after its watched episodes are deleted**

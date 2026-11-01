@@ -1,6 +1,6 @@
 # #174 — let release age lean older, not only newer
 
-Status: design 2026-10-30. Not implemented. Needs an owner go/no-go.
+Status: built 2026-11-01 after an owner go, uncommitted. Older-side time constant: 40 years (owner's pick).
 
 ## Verdict
 
@@ -99,3 +99,11 @@ a copy of the production DB. Run TMDB-only arms: no AI, no token spend.
 
 Ranking plus UI, with no Plex writes, no migration and no identity data. This is not an Architecture
 Review trigger.
+
+## Replay result (2026-11-01, production copy, 230 held-out discoveries, TMDB only, `scripts/recency_eval.py`)
+
+- In-row hits: server setting (0.95 newer) 18, neutral 12, -0.25 12, -0.5 12. At -1: 10 with T=25, 9 with T=15, 12 with T=40.
+- Rows' share before 2000: neutral 11%, -0.5 16%, -1 about 20%. The pool holds 14% before 2000, so ranking can reach them.
+- The held-out discoveries themselves are new (median 2023, 9% before 2000). Leaning older is a taste choice and
+  never a better default. The default is unchanged.
+- T=40 chosen: no hit lost at full strength, and nearly the same era shift as T=25.

@@ -623,7 +623,7 @@ class RowSpec:
     # single row stays lively on a server that holds everything else.
     idle_hold_days: int | None = None
     # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = strongly prefer
-    # new. None -> inherit EngineConfig.recency.
+    # new, -1.0 = lean older (a bounded boost, #174). None -> inherit EngineConfig.recency.
     #
     # Not the same axis as `refresh_days`, and the pair is the reason the UI label is "Recent
     # releases" rather than "Newness": that is a CADENCE (how often this row
@@ -1446,7 +1446,8 @@ class EngineConfig:
     idle_hold_days: int = 0
     # How much a title's release date counts when ranking it: 0.0 (default) = ignore age entirely,
     # which is how this ranked before the setting existed; 1.0 = every ~8 years of age halves a
-    # title's weight. A WEIGHT, never a filter — an old title is only ever asked to be a better
+    # title's weight; -1.0 = older titles gain a bounded boost (see ranking.OLDER_BOOST_MAX). A WEIGHT,
+    # never a filter — an old title is only ever asked to be a better
     # match. Overridable per row (see RowSpec.recency for why it is not the refresh cadence).
     #
     # The DATACLASS defaults to 0.0 so a library caller opts in rather than inheriting an opinion.

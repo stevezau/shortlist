@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  OLDER_BOOST_MAX,
+  OLDER_BOOST_YEARS,
   RECENCY_HALF_LIFE_YEARS,
   recencyBadgeLabel,
   recencyDescription,
@@ -49,6 +51,47 @@ describe("recencyWeight", () => {
   it("matches the engine's curve at half strength", () => {
     expect(recencyWeight(20, 50)).toBeCloseTo(0.42044820762685725, 12);
     expect(recencyWeight(30, 50)).toBeCloseTo(0.2726269331663144, 12);
+  });
+});
+
+describe("recencyWeight, older side (#174)", () => {
+  it("mirrors the engine's constants", () => {
+    expect(OLDER_BOOST_MAX).toBe(0.5);
+    expect(OLDER_BOOST_YEARS).toBe(40);
+  });
+
+  it("is 1 for a title from this year, and for an unreleased one", () => {
+    expect(recencyWeight(0, -100)).toBe(1);
+    expect(recencyWeight(-3, -100)).toBe(1);
+  });
+
+  it("matches the engine's boost at full strength", () => {
+    expect(recencyWeight(10, -100)).toBeCloseTo(1.1105996084642975, 12);
+    expect(recencyWeight(40, -100)).toBeCloseTo(1.3160602794142788, 12);
+  });
+
+  it("scales with strength and never exceeds the cap", () => {
+    expect(recencyWeight(40, -50)).toBeCloseTo(1.1580301397071393, 12);
+    expect(recencyWeight(400, -100)).toBeLessThanOrEqual(1 + OLDER_BOOST_MAX);
+  });
+});
+
+describe("recencyEras, older side", () => {
+  it("normalises the bars to the largest weight, oldest tallest", () => {
+    const eras = recencyEras(-100, NOW);
+    const weights = eras.map((e) => e.weight);
+    expect(weights).toEqual([...weights].sort((a, b) => a - b));
+    expect(weights[weights.length - 1]).toBe(1);
+    expect(eras.at(-1)?.factor).toBeCloseTo(1.3160602794142788, 12);
+  });
+});
+
+describe("recencyDescription, older side", () => {
+  it("says it leans older, in plain numbers, and that it is a nudge", () => {
+    const sentence = recencyDescription(-100, NOW);
+    expect(sentence).toMatch(/leans older/i);
+    expect(sentence).toContain("32%");
+    expect(sentence).toMatch(/not a filter/i);
   });
 });
 
@@ -125,11 +168,22 @@ describe("recencyBadgeLabel", () => {
   it("calls an explicit zero off, not 0%", () => {
     expect(recencyBadgeLabel(0)).toMatch(/any era|off/i);
   });
+
+  it("names the older lean", () => {
+    expect(recencyBadgeLabel(-0.4)).toBe("Recent: older 40%");
+    expect(recencyBadgeLabel(-1)).toMatch(/strongly older/i);
+  });
 });
 
 describe("row-globals", () => {
   it("phrases the global for the row editor's inherit caption", () => {
     expect(recencyGlobal({ "recommendations.recency": 0.5 })).toContain("50%");
+  });
+
+  it("phrases an older lean as older", () => {
+    expect(recencyGlobal({ "recommendations.recency": -0.5 })).toMatch(
+      /50%.*older/i,
+    );
   });
 
   it("says nothing at all while settings are still loading", () => {

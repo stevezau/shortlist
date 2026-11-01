@@ -1041,7 +1041,7 @@
             "anyOf": [
               {
                 "maximum": 1.0,
-                "minimum": 0.0,
+                "minimum": -1.0,
                 "type": "number"
               },
               {

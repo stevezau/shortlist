@@ -106,7 +106,8 @@ export function refreshDaysBadgeLabel(days: number): string {
 /**
  * "Recent releases" — how much a title's RELEASE DATE counts when ranking it, as a whole
  * percentage. 0 = ignore age (how ranking worked before this existed), 100 = every
- * RECENCY_HALF_LIFE_YEARS of age halves a title's weight. Stored as a 0..1 fraction; UI is percent.
+ * RECENCY_HALF_LIFE_YEARS of age halves a title's weight, -100 = older titles gain a bounded boost
+ * (#174). Stored as a -1..1 fraction; UI is percent.
  *
  * Not the refresh cadence, despite living beside it in the same card. That is how OFTEN a row
  * re-picks. This is a PREFERENCE — which titles win when it does. A row can rebuild nightly and
@@ -127,19 +128,37 @@ export const RECENCY_DEFAULT = 50;
  */
 export const RECENCY_HALF_LIFE_YEARS = 8;
 
+/**
+ * The older-lean boost: at -100 a title of age `a` scores `1 + OLDER_BOOST_MAX * (1 - exp(-a / OLDER_BOOST_YEARS))`.
+ *
+ * MUST equal `OLDER_BOOST_MAX` and `OLDER_BOOST_YEARS` in shortlist/engine/ranking.py;
+ * `tests/unit/test_web_constant_parity.py` fails if either side moves alone.
+ */
+export const OLDER_BOOST_MAX = 0.5;
+export const OLDER_BOOST_YEARS = 40;
+
 /** Ages, in years, that the era strip under the slider samples. */
 const RECENCY_ERA_AGES = [0, 10, 20, 30, 40];
 
 /**
- * How strongly a title of a given age ranks, 0..1 — the engine's `recency_factor`, in the browser.
+ * How strongly a title of a given age ranks — the engine's `recency_factor`, in the browser.
+ * At or below 1 on the newer side (0..100), above 1 on the older side (-100..0).
  *
  * Age is clamped at 0 for the same reason the engine clamps it: a negative age (an unreleased
  * title) would raise `0.5` to a negative power and produce a weight above 1.
  */
 export function recencyWeight(ageYears: number, pct: number): number {
-  const strength = Math.min(100, Math.max(0, pct)) / 100;
-  if (strength <= 0) return 1;
   const age = Math.max(0, ageYears);
+  const clamped = Math.min(100, Math.max(-100, pct));
+  if (clamped < 0) {
+    const strength = -clamped / 100;
+    return (
+      1 +
+      OLDER_BOOST_MAX * strength * (1 - Math.exp(-age / OLDER_BOOST_YEARS))
+    );
+  }
+  const strength = clamped / 100;
+  if (strength <= 0) return 1;
   return Math.pow(0.5, (age / RECENCY_HALF_LIFE_YEARS) * strength);
 }
 
@@ -152,11 +171,15 @@ export function recencyWeight(ageYears: number, pct: number): number {
 export function recencyEras(
   pct: number,
   currentYear: number,
-): { year: number; weight: number }[] {
-  return RECENCY_ERA_AGES.map((age) => ({
+): { year: number; weight: number; factor: number }[] {
+  const eras = RECENCY_ERA_AGES.map((age) => ({
     year: currentYear - age,
-    weight: recencyWeight(age, pct),
+    factor: recencyWeight(age, pct),
   }));
+  // `weight` is what the bar draws: relative to the largest factor, so on the older side (where
+  // factors are above 1) the oldest era is the full-height bar. `factor` is the engine's multiplier.
+  const largest = Math.max(...eras.map((era) => era.factor));
+  return eras.map((era) => ({ ...era, weight: era.factor / largest }));
 }
 
 /**
@@ -164,6 +187,11 @@ export function recencyEras(
  * their own library, not an abstract multiplier.
  */
 export function recencyDescription(pct: number, currentYear: number): string {
+  if (pct < 0) {
+    const oldestAge = Math.max(...RECENCY_ERA_AGES);
+    const boost = Math.round((recencyWeight(oldestAge, pct) - 1) * 100);
+    return `Leans older: a ${oldestAge}-year-old title scores ${boost}% higher than one from this year. It is a nudge, not a filter — it only reorders titles your sources already found; use the minimum and maximum year to rule eras out.`;
+  }
   if (pct <= 0)
     return "Off — release date is ignored. A great 1994 film ranks like a great one from this year.";
   // The age at which a title is worth about half a brand-new one: half-life / strength.
@@ -185,7 +213,9 @@ export function recencyDescription(pct: number, currentYear: number): string {
 /** Terse label for a row card's "this row overrides the release-date weight" badge. */
 export function recencyBadgeLabel(pct: number): string {
   const whole = Math.round(pct * 100);
-  if (whole <= 0) return "Recent: any era";
+  if (whole <= -100) return "Recent: strongly older";
+  if (whole < 0) return `Recent: older ${-whole}%`;
+  if (whole === 0) return "Recent: any era";
   if (whole >= 100) return "Recent: strongly new";
   return `Recent: ${whole}%`;
 }
