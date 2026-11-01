@@ -104,7 +104,7 @@ def a_pick_so_the_rating_key_resolves(sessions, *, tmdb_id=550, rating_key=9001)
         s.commit()
 
 
-def profile(history=(), *, slug="alex", account=99, complete=True):
+def profile(history=(), *, slug="alex", account=99, complete=True, played_earlier=()):
     """`complete=True` by default: these tests are about what withdrawal decides once it is allowed
     to run at all. Pass False to model a read that could not prove it saw everything."""
     return UserProfile(
@@ -113,6 +113,7 @@ def profile(history=(), *, slug="alex", account=99, complete=True):
         user_type=UserType.SHARED,
         slug=slug,
         history=list(history),
+        played_earlier=list(played_earlier),
         history_complete=complete,
     )
 
@@ -167,7 +168,7 @@ class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
     partial watch never sets the flag at all, so withdrawing on absence alone would delete the exact
     signal this whole feature exists to capture."""
 
-    def a_credited_pick(self, world, *, tmdb, rating_key=0, title="T"):
+    def a_credited_pick(self, world, *, tmdb, rating_key=0, title="T", media="movie"):
         with world() as s:
             s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
             s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
@@ -179,7 +180,7 @@ class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
                     section_key="1",
                     library="Movies",
                     tmdb_id=tmdb,
-                    media_type="movie",
+                    media_type=media,
                     rating_key=rating_key,
                     rank=1,
                     title=title,
@@ -202,6 +203,37 @@ class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
 
         with world() as s:
             assert s.query(PickRow).filter_by(tmdb_id=510).one().watched_at is None
+
+    def test_a_show_whose_watched_episodes_were_deleted_keeps_its_credit(self, world):
+        """#173: once its watched episodes leave the library, a show drops out of `history` and arrives
+        as `played_earlier` instead. Plex still records the play, so the flag is not gone: withdrawing
+        the credit would take back a watch the read just proved happened."""
+        self.a_credited_pick(world, tmdb=1399, title="Game of Thrones", media="show")
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+        deleted = WatchedItem(
+            title="Game of Thrones",
+            media_type=MediaType.SHOW,
+            watched_at=NOW - timedelta(days=1),
+            tmdb_id=1399,
+            viewed_leaf_count=0,
+            leaf_count=10,
+        )
+
+        reconcile_watched(world, [profile(other, played_earlier=[deleted])])
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=1399).one().watched_at is not None
+
+    def test_a_show_gone_from_both_lists_is_still_withdrawn(self, world):
+        """The other side: a series-level "mark as unwatched" clears the play record too, so the show is
+        in neither list and its flag-only credit goes, as for a movie."""
+        self.a_credited_pick(world, tmdb=1398, title="The Sopranos", media="show")
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        reconcile_watched(world, [profile(other)])
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=1398).one().watched_at is None
 
     def test_a_credit_we_watched_happen_survives(self, world):
         """The partial watch. It never sets Plex's flag, so it is absent from every history read —
