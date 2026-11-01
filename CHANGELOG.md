@@ -6,6 +6,8 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-11-01
+
 ### Added
 
 - **Lean towards older releases** ([#174](https://github.com/stevezau/shortlist/issues/174)). The

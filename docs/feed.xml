@@ -5,8 +5,34 @@
   <link href="https://shortlistapp.dev/feed.xml" rel="self" type="application/atom+xml"/>
   <link href="https://shortlistapp.dev/" rel="alternate" type="text/html"/>
   <id>https://shortlistapp.dev/feed.xml</id>
-  <updated>2026-10-25T00:00:00Z</updated>
+  <updated>2026-11-01T00:00:00Z</updated>
   <author><name>Steven Adams</name></author>
+  <entry>
+    <title>Shortlist 1.14.0</title>
+    <link href="https://github.com/stevezau/shortlist/releases/tag/v1.14.0" rel="alternate" type="text/html"/>
+    <id>https://github.com/stevezau/shortlist/releases/tag/v1.14.0</id>
+    <updated>2026-11-01T00:00:00Z</updated>
+    <content type="text">### Added
+
+- **Lean towards older releases** ([#174](https://github.com/stevezau/shortlist/issues/174)). The
+  **Recent releases** slider now runs both ways. Left of the middle (**Older**) it gives older titles a
+  boost instead: at the far left a 40-year-old title scores about 32% higher than an equally good new
+  one, and nothing is boosted by more than 50%. The middle still ignores age and the right side works
+  as before, so no saved value changes meaning. It is a preference, not a filter: it only reorders
+  titles your sources already found, and a show's age is its first-air year. To rule eras out, use a
+  row's minimum and maximum year.
+
+### Fixed
+
+- **A show you'd started no longer comes back as new after its watched episodes are deleted**
+  ([#173](https://github.com/stevezau/shortlist/issues/173)). When the episodes someone watched are removed
+  from the library, Plex still records the show as played, but reports none of the remaining episodes as
+  watched. Shortlist only looked at the episodes, so a row set to **Already-watched titles: 0%** or **Only
+  series they have not started** could recommend that show again. Shortlist now also counts the show's own
+  play record. To make a show count as unstarted again, use **Mark as unwatched** on the whole series in Plex.
+  That includes a show whose Agregarr trailer someone played: once the trailer is cleaned up, Plex still
+  records the play, so those rows leave the show out for that person.</content>
+  </entry>
   <entry>
     <title>Shortlist 1.13.0</title>
     <link href="https://github.com/stevezau/shortlist/releases/tag/v1.13.0" rel="alternate" type="text/html"/>
@@ -1651,37 +1677,5 @@ in it ships in 1.5.1; the notes are kept here because the images were briefly pu
 
 - **A connection card says what it needs before what it is** — the part that actually blocks you was
   the easiest to skim past.</content>
-  </entry>
-  <entry>
-    <title>Shortlist 1.2.1</title>
-    <link href="https://github.com/stevezau/shortlist/releases/tag/v1.2.1" rel="alternate" type="text/html"/>
-    <id>https://github.com/stevezau/shortlist/releases/tag/v1.2.1</id>
-    <updated>2026-08-07T00:00:00Z</updated>
-    <content type="text">### Added
-
-- **A run now says what Plex ratings did to it.** Open a run → **How we picked** for a person, and
-  the "Watched recently" step states the rating policy that run used in one line: off, on but nobody
-  rated anything low enough, on but the account's ratings were disbelieved as tool-written, or how
-  many titles a rating dropped. Until now all four looked identical — the trace listed dropped
-  titles when there were any and said nothing at all when there weren't, so a run where the feature
-  silently did nothing read exactly like a healthy one. The distrusted case is the one worth
-  catching: a Kometa rating sync on that account means every rating is ignored, all run, invisibly.
-
-  The line reports the setting **as it was when the run happened**, not as Settings reads today, so
-  changing it later doesn't rewrite the history of a run you open a fortnight afterwards. Runs
-  recorded before this release don't carry it and still show just the dropped titles.
-
-  It also catches the half-case the account-level check is designed to let through: if a tool has
-  written _some_ of someone's ratings but not enough to condemn the account, the counted ratings and
-  the skipped ones are reported separately, rather than a single total that quietly speaks for values
-  nothing ever looked at.
-
-### Fixed
-
-- **A pick's "why" said "Because you liked…" when it only ever knew what someone watched.** Every
-  pick with a genre in common with its seed claimed a preference nobody had expressed — seeds are
-  weighted purely by how recently something was watched, and a Plex rating can only ever _remove_ a
-  seed, never mark one as liked. It now reads "Because you watched…", which is the fact we have.
-  Reasons are written into each run as it happens, so runs already recorded keep the old wording.</content>
   </entry>
 </feed>
