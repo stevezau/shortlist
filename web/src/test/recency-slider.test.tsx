@@ -7,7 +7,7 @@ const THIS_YEAR = new Date().getFullYear();
 
 describe("RecencySlider", () => {
   it("names the newest bar instead of printing a 100% that can never move", () => {
-    // Every bar is measured against a title released THIS YEAR, so the leftmost one is full at every
+    // Every bar is measured against a title released THIS YEAR, so the newest one is full at every
     // slider position. Labelling a fixed reference "100%" makes it look like a value that ought to
     // respond to the control — which is exactly how it was read.
     const { rerender } = render(
@@ -121,11 +121,24 @@ describe("RecencySlider", () => {
       expect(screen.queryByText("-40%")).not.toBeInTheDocument();
     });
 
-    it("labels the older bars as boosts, keeping the reference bar named", () => {
+    it("labels every older bar as a boost, this year's as +0% (owner decision 2026-11-01)", () => {
       render(<RecencySlider value={-100} onChange={() => {}} />);
-      expect(screen.getByText("this year")).toBeInTheDocument();
+      expect(screen.getByText("+0%")).toBeInTheDocument();
+      expect(screen.queryByText("this year")).not.toBeInTheDocument();
       expect(screen.getByText("+32%")).toBeInTheDocument();
       expect(screen.getByText("+11%")).toBeInTheDocument();
     });
+
+    it.each([-100, 0, 65])(
+      "draws the years oldest to newest, left to right, like the slider (value %i)",
+      (value) => {
+        render(<RecencySlider value={value} onChange={() => {}} />);
+        const years = screen
+          .getAllByText(/^\d{4}$/)
+          .map((n) => Number(n.textContent));
+        expect(years).toHaveLength(5);
+        expect(years).toEqual([...years].sort((a, b) => a - b));
+      },
+    );
   });
 });

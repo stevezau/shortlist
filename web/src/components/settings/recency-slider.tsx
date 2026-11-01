@@ -13,11 +13,10 @@ interface RecencySliderProps {
  * prefer new). A weight, not a filter — old titles still reach rows, they just have to be a better match.
  *
  * The era strip is the control's whole point. "50%" tells nobody anything, so the bars say what the
- * setting DOES to titles of each age — each one relative to a title released this year, which is why
- * the leftmost bar is full at every setting and labelled "this year" rather than "100%".
- * setting actually trades: how strongly a title of each vintage ranks, recomputed live from the
- * same curve the engine uses. Years are counted back from today rather than written down, so the
- * labels stay honest as the calendar moves.
+ * setting DOES to titles of each age: how strongly a title of each vintage ranks, recomputed live from
+ * the same curve the engine uses. Each is relative to a title released this year, so the newest
+ * (rightmost) bar is the reference: "this year" on the newer side, "+0%" on the older side. Years are
+ * counted back from today rather than written down, so the labels stay honest as the calendar moves.
  *
  * A native range input, so it is keyboard-accessible for free; the whole-percent value maps to a
  * 0..1 fraction at the call site, like the watched-cap slider beside it.
@@ -29,7 +28,8 @@ export function RecencySlider({
   className,
 }: RecencySliderProps) {
   const currentYear = new Date().getFullYear();
-  const eras = recencyEras(value, currentYear);
+  // Oldest on the left, newest on the right — the same direction as the slider's Older / Newer ends.
+  const eras = recencyEras(value, currentYear).reverse();
 
   return (
     <div className={cn("space-y-1.5", className)}>
@@ -91,9 +91,7 @@ export function RecencySlider({
                 a value that ought to respond to the control — so it is named for what it is. */}
             <span className="text-xs tabular-nums text-muted-foreground/70">
               {value < 0
-                ? era.factor <= 1
-                  ? "this year"
-                  : `+${Math.round((era.factor - 1) * 100)}%`
+                ? `+${Math.round((era.factor - 1) * 100)}%`
                 : era.weight >= 1
                   ? "this year"
                   : `${Math.round(era.weight * 100)}%`}
