@@ -458,9 +458,11 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
     _setting(
         "recommendations.recency",
         "Recent-release preference",
-        "How strongly newer releases are favoured while ranking; zero ignores age and one applies the full weight.",
+        "Which release years ranking leans towards: positive favours newer releases (one is the full weight), "
+        "negative favours older ones (minus one is the full boost, capped at +50%), zero ignores age. "
+        "A preference, not a filter.",
         SettingGroup.RECOMMENDATIONS,
-        range=NumericRange(minimum=0, maximum=1, unit="weight"),
+        range=NumericRange(minimum=-1, maximum=1, unit="weight"),
         effects=(LOCAL, FUTURE_ROW),
     ),
     _setting(

@@ -1,4 +1,6 @@
+import math
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -7,6 +9,8 @@ from loguru import logger
 
 from shortlist.engine.models import Candidate, MediaType, Pick, RowSpec, Seed, UserProfile, UserType
 from shortlist.engine.ranking import (
+    OLDER_BOOST_MAX,
+    OLDER_BOOST_YEARS,
     RECENCY_HALF_LIFE_YEARS,
     cut_for_recency,
     diversify_by_seed,
@@ -194,6 +198,35 @@ class TestRecencyFactor:
     def test_the_weight_is_clamped_to_full_strength(self):
         """A hand-edited config or an API caller can send 2.0; the curve must not go off a cliff."""
         assert recency_factor(1994, NOW, 2.0) == recency_factor(1994, NOW, 1.0)
+
+
+class TestOlderLean:
+    """#174: a negative `recency` leans OLDER — a bounded boost, `1 + MAX * s * (1 - exp(-age / T))`, where
+    s = -recency. Bounded like the franchise and cast boosts, so it shades the order and never decides it."""
+
+    def test_a_negative_value_boosts_an_old_title(self):
+        expected = 1 + OLDER_BOOST_MAX * (1 - math.exp(-25 / OLDER_BOOST_YEARS))
+        assert recency_factor(NOW - 25, NOW, -1.0) == pytest.approx(expected)
+        assert recency_factor(NOW - 25, NOW, -1.0) > 1.0
+
+    def test_half_strength_gives_half_the_boost(self):
+        full = recency_factor(NOW - 25, NOW, -1.0) - 1
+        assert full > 0
+        assert recency_factor(NOW - 25, NOW, -0.5) - 1 == pytest.approx(full / 2)
+
+    def test_the_boost_rises_with_age_and_never_passes_its_ceiling(self):
+        weights = [recency_factor(NOW - age, NOW, -1.0) for age in (0, 5, 10, 25, 40, 60, 100, 1000)]
+        assert all(a < b for a, b in pairwise(weights))
+        assert weights[0] == 1.0
+        assert all(w <= 1 + OLDER_BOOST_MAX for w in weights)
+
+    def test_the_older_lean_is_clamped_to_full_strength(self):
+        assert recency_factor(1960, NOW, -2.0) == recency_factor(1960, NOW, -1.0) > 1.0
+
+    @pytest.mark.parametrize(("year", "year_now"), [(None, NOW), (NOW + 3, NOW), (1994, 0)])
+    def test_no_opinion_inputs_stay_neutral_when_leaning_older(self, year, year_now):
+        """The same three "no opinion" cases as the newer side: unknown year, unreleased title, no run year."""
+        assert recency_factor(year, year_now, -1.0) == 1.0
 
 
 class TestScoreWithRecency:
@@ -871,6 +904,7 @@ class TestPoolKeyMatchesPoolExclusions:
         stub = object.__new__(RowPolicy)
         stub.watched_titles = watched_titles(watched_movies, watched_shows, 0.8)
         stub.watched_shows = watched_shows
+        stub.played_earlier = {50}  # a show whose watched episodes were deleted (#173)
         stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
 
         by_key: dict[tuple, set] = {}
@@ -913,11 +947,13 @@ class TestPoolKeyMatchesPoolExclusions:
         stub = object.__new__(RowPolicy)
         stub.watched_titles = watched_titles({949}, watched_shows, 0.8)
         stub.watched_shows = watched_shows
+        stub.played_earlier = {50}  # a show whose watched episodes were deleted (#173)
         stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
 
         zero_pct = stub.zero_pct_exclusions()
 
         assert started_shows(watched_shows) <= zero_pct
+        assert stub.started() <= zero_pct
 
 
 class TestRankAgainstPoolOrdersOnly:

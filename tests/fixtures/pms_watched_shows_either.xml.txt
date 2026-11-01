@@ -1,0 +1,43 @@
+<!--
+  PMS 1.43.5 GET /library/sections/{key}/all?type=2&includeGuids=1&push=1&viewedLeafCount!=0&or=1&unwatched=0&pop=1
+  against a SHOW library, owner token. Recorded 2026-10-30 from a real server (plex-safety rule 11) for
+  issue #173. Three rows cut from the 547 returned, one of each shape. Titles, ratingKeys, guids and
+  ids are sanitised, every timestamp is shifted by one constant (order and gaps survive), and artwork,
+  summary and rating attributes are dropped. The counts are verbatim.
+
+  THE SHOW READ SHORTLIST MAKES. `push`/`or`/`pop` group the two conditions into an OR. On that
+  library the grouped read returned 547 shows, exactly the union of `viewedLeafCount!=0` (485) and
+  `unwatched=0` (528). The same held for each of ten shared accounts read with their own token. The
+  ungrouped form `or=1&viewedLeafCount!=0&unwatched=0` returned 5,953 rows, more than the library's
+  5,012 shows, so the brackets matter. `sort=lastViewedAt:desc` is still honoured with the group.
+
+  WHY BOTH HALVES.
+
+    9001 Played Show       a show they played: in both halves.
+    9002 Marked Series     marked watched rather than played: episode counts set, NO show
+                           `viewCount`/`lastViewedAt`. Missing from `unwatched=0` (issue #108).
+    9003 Episodes Removed  watched, then the watched episodes were deleted: the show keeps its
+                           `viewCount` and `lastViewedAt`, `viewedLeafCount` is 0. Missing from
+                           `viewedLeafCount!=0` (issue #173). 62 of the owner's shows on that server
+                           were in this state. In 54 of them every episode now present was added after
+                           the show's `lastViewedAt`.
+
+  How each state arises, and what an un-watch does to it: `pms_show_counters_after_deleting_episodes.json`.
+-->
+<MediaContainer size="3" allowSync="1" identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="TV Shows" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1792751798" title1="TV Shows" title2="All Shows" viewGroup="show" totalSize="3">
+  <Directory ratingKey="9001" key="/library/metadata/9001/children" guid="plex://show/sanitized1" type="show" title="Played Show" index="1" viewCount="2" skipCount="1" lastViewedAt="1658594712" year="2001" leafCount="23" viewedLeafCount="2" childCount="2" addedAt="1787149749" updatedAt="1788336103">
+    <Guid id="imdb://tt0000001"/>
+    <Guid id="tmdb://700001"/>
+    <Guid id="tvdb://800001"/>
+  </Directory>
+  <Directory ratingKey="9002" key="/library/metadata/9002/children" guid="plex://show/sanitized2" type="show" title="Marked Series" index="1" year="2002" leafCount="8" viewedLeafCount="8" childCount="1" addedAt="1787149564" updatedAt="1791355158">
+    <Guid id="imdb://tt0000002"/>
+    <Guid id="tmdb://700002"/>
+    <Guid id="tvdb://800002"/>
+  </Directory>
+  <Directory ratingKey="9003" key="/library/metadata/9003/children" guid="plex://show/sanitized3" type="show" title="Episodes Removed" index="1" viewCount="33" skipCount="3" lastViewedAt="1607171444" year="2003" leafCount="30" viewedLeafCount="0" childCount="3" addedAt="1607160964" updatedAt="1791355331">
+    <Guid id="imdb://tt0000003"/>
+    <Guid id="tmdb://700003"/>
+    <Guid id="tvdb://800003"/>
+  </Directory>
+</MediaContainer>

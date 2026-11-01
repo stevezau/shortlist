@@ -367,6 +367,10 @@ def _counts_as_watched(
 
     if media_type == "movie":
         return True  # a watched movie is finished by definition — there is no fraction to apply
+    if viewed == 0:
+        # A show record with no episode watched: Plex records it as played, but those episodes are gone
+        # (`WatchedItem.only_played_earlier`, #173). Started, never finished — `RowPolicy.started`.
+        return cap == 0 and not rewatch
     shows = {1: (viewed or 0, total)}
     finished = watched_titles(set(), shows, show_pct)
     if cap == 0 and not rewatch:
@@ -587,7 +591,10 @@ async def title_lookup(request: Request, q: str = Query(min_length=1, max_length
             entry = grouped.setdefault(
                 key_of(w.user_id, w.tmdb_id, w.media_type, w.title or ""), {"watched": None, "picks": []}
             )
-            entry["watched"] = w
+            # The furthest-watched copy, as the engine keeps (`RowPolicy.load_watched_breakdown`): a show
+            # finished in one library and played earlier in another (#173) is finished.
+            if entry["watched"] is None or (w.viewed_leaf_count or 0) > (entry["watched"].viewed_leaf_count or 0):
+                entry["watched"] = w
         for p in picks:
             entry = grouped.setdefault(
                 key_of(p.user_id, p.tmdb_id, p.media_type, p.title or ""), {"watched": None, "picks": []}

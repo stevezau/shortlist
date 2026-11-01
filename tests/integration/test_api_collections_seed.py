@@ -355,7 +355,7 @@ class TestCollectionsSeed:
         created = client.post("/api/collections", json={"name": "New Row", "recency": 0.8})
         assert created.status_code == 201 and created.json()["recency"] == 0.8
         assert client.post("/api/collections", json={"name": "X", "recency": 1.5}).status_code == 422
-        assert client.post("/api/collections", json={"name": "X", "recency": -0.1}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "recency": -1.1}).status_code == 422  # #174: -1..1
         assert client.put("/api/settings", json={"values": {"recommendations.recency": 2.0}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"recommendations.recency": 0.4}}).status_code == 200
 

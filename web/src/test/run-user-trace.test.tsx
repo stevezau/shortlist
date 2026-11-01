@@ -990,6 +990,11 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     ).toBeInTheDocument();
   });
 
+  it("says release date leaned older when the weight was negative (#174)", () => {
+    render(<TraceView data={withSelection({ recency: -0.4 })} />);
+    expect(screen.getByText(/leaned older by 40%/i)).toBeInTheDocument();
+  });
+
   it("says release date was ignored rather than showing 0%", () => {
     render(<TraceView data={withSelection({ recency: 0 })} />);
     expect(screen.getByText(/Release date was ignored/i)).toBeInTheDocument();
@@ -1061,6 +1066,16 @@ describe("TraceView — why a title won or lost", () => {
       />,
     );
     expect(screen.getByText(/age ×0\.27/)).toBeInTheDocument();
+  });
+
+  it("shows an older-lean multiplier above 1 as a boost (#174)", () => {
+    render(
+      <TraceView
+        data={withReturn({ year: 1960, rating: 8.6, age_weight: 1.18 })}
+      />,
+    );
+    expect(screen.getByText(/\+18% for age/)).toBeInTheDocument();
+    expect(screen.queryByText(/age ×/)).not.toBeInTheDocument();
   });
 
   it("omits the multiplier when release date was not consulted", () => {

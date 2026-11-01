@@ -13,13 +13,14 @@ a third copy is another thing to drift.
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
 import pytest
 
 from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE
-from shortlist.engine.ranking import RECENCY_HALF_LIFE_YEARS
+from shortlist.engine.ranking import OLDER_BOOST_MAX, OLDER_BOOST_YEARS, RECENCY_HALF_LIFE_YEARS, recency_factor
 from shortlist.server.settings_store import DEFAULTS
 
 WEB_SRC = Path(__file__).resolve().parents[2] / "web" / "src"
@@ -45,6 +46,8 @@ def ts_source() -> str:
         ("ROW_SIZE_MIN", MIN_ROW_SIZE, "engine.models.MIN_ROW_SIZE"),
         ("ROW_SIZE_MAX", MAX_ROW_SIZE, "engine.models.MAX_ROW_SIZE"),
         ("RECENCY_HALF_LIFE_YEARS", RECENCY_HALF_LIFE_YEARS, "engine.ranking.RECENCY_HALF_LIFE_YEARS"),
+        ("OLDER_BOOST_MAX", OLDER_BOOST_MAX, "engine.ranking.OLDER_BOOST_MAX"),
+        ("OLDER_BOOST_YEARS", OLDER_BOOST_YEARS, "engine.ranking.OLDER_BOOST_YEARS"),
         ("MAX_REFRESH_DAYS", MAX_REFRESH_DAYS, "engine.models.MAX_REFRESH_DAYS"),
         (
             "REFRESH_DAYS_DEFAULT",
@@ -64,6 +67,17 @@ def test_the_spa_mirrors_the_engine(ts_source: str, ts_name: str, python_value: 
     assert _exported_number(ts_source, ts_name) == pytest.approx(float(python_value)), (
         f"constants.ts {ts_name} disagrees with {owner}"
     )
+
+
+def test_the_older_lean_curve_matches_the_engine(ts_source: str) -> None:
+    """#174: the SPA draws the older-side curve from two mirrored constants. Evaluate the engine at the
+    TS constants' values, and pin exact numbers, so neither side can move alone."""
+    boost_max = _exported_number(ts_source, "OLDER_BOOST_MAX")
+    boost_years = _exported_number(ts_source, "OLDER_BOOST_YEARS")
+    assert (boost_max, boost_years) == (OLDER_BOOST_MAX, OLDER_BOOST_YEARS)
+    for age, expected in [(10, 1.1105996084642975), (40, 1.3160602794142788)]:
+        assert recency_factor(2026 - age, 2026, -1.0) == pytest.approx(expected, abs=1e-12)
+        assert 1 + boost_max * (1 - math.exp(-age / boost_years)) == pytest.approx(expected, abs=1e-12)
 
 
 def test_no_copy_of_the_retired_freshness_curve_survives() -> None:

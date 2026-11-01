@@ -33,16 +33,27 @@ _UNATTRIBUTED = "_unattributed"  # a hand-built candidate carrying no source tag
 # curve it advertises, and test_recency_curve_matches_the_engine pins the two together.
 RECENCY_HALF_LIFE_YEARS = 8.0
 
+# The older side (#174, a negative `recency`) is a bounded boost, not a mirror of the decay above: mirrored
+# at an 8-year half-life a 1990 film would score 22x. The ceiling matches FRANCHISE_BOOST_MAX and
+# CAST_BOOST_MAX, so it shades the order like the other positive signals and never decides it.
+# OLDER_BOOST_YEARS is the time constant, chosen by replay (#174, 2026-11-01): at full strength +11% at 10 years,
+# +32% at 40, and no hit lost against neutral over 230 held-out discoveries (25 years lost 2, within noise).
+OLDER_BOOST_MAX = 0.5
+OLDER_BOOST_YEARS = 40.0
+
 
 def recency_factor(year: int | None, year_now: int, recency: float) -> float:
-    """Release-date weight for a title, in ``0..1`` — what ``recency`` multiplies into its score.
+    """Release-date weight for a title — what ``recency`` multiplies into its score.
 
     ``0.5 ** (age / RECENCY_HALF_LIFE_YEARS * recency)``: exponential decay whose half-life the
     slider stretches, so ``recency`` behaves like a strength dial rather than an on/off. It is a
     weight and never a filter — an old title is only ever asked to be a better match, never excluded.
 
+    A NEGATIVE ``recency`` leans older (#174): ``1 + OLDER_BOOST_MAX * s * (1 - exp(-age / OLDER_BOOST_YEARS))``
+    with ``s = -recency``, a boost that rises with age and never passes ``1 + OLDER_BOOST_MAX``.
+
     Three inputs mean "no opinion", and all three return exactly ``1.0`` rather than a penalty:
-    ``recency <= 0`` (age-blind — how ranking worked before this existed; the SERVER default is now
+    ``recency == 0`` (age-blind — how ranking worked before this existed; the SERVER default is now
     0.5 for every install, and only the engine dataclass still defaults to 0), a title with
     no known ``year`` (TMDB serves plenty; the unrated-gets-5.0 prior sets the precedent that a
     missing signal is not a bad one), and ``year_now <= 0`` (a direct engine call with no
@@ -55,19 +66,26 @@ def recency_factor(year: int | None, year_now: int, recency: float) -> float:
     still have to win on rating, seed frequency and affinity like everything else; being spared a
     penalty is not the same as being promoted past a title that outscores them.
 
+    Leaning OLDER the same 1.0 is the lowest factor rather than the best: an undated title is treated
+    as brand-new on both sides, so it gets no age boost. Accepted, not overlooked (#174 release review,
+    2026-11-01): none of the 92,598 candidates in the production replay lacked a year, and inventing an
+    age to boost would be the same guess this docstring rejects for the newer side.
+
     Args:
         year: The title's release year (a show's first-air year), or None if unknown.
         year_now: The year the run belongs to, from ``EngineContext.run_day``. 0 disables.
-        recency: Strength, 0.0 (ignore age) .. 1.0 (full decay). Values above 1.0 clamp.
+        recency: -1.0 (full older lean) .. 0.0 (ignore age) .. 1.0 (full decay). Values past ±1.0 clamp.
 
     Returns:
-        A multiplier in ``(0, 1]``.
+        A multiplier in ``(0, 1]`` leaning newer, ``[1, 1 + OLDER_BOOST_MAX]`` leaning older.
     """
-    if recency <= 0 or year is None or year_now <= 0:
+    if recency == 0 or year is None or year_now <= 0:
         return 1.0
     # Clamped at 0: an unreleased title (2027 in 2026) has negative age, and `0.5 ** negative` is
     # GREATER than 1 — it would outrank everything actually watchable tonight.
     age = max(0, year_now - year)
+    if recency < 0:
+        return 1 + OLDER_BOOST_MAX * min(-recency, 1.0) * (1 - math.exp(-age / OLDER_BOOST_YEARS))
     return 0.5 ** (age / RECENCY_HALF_LIFE_YEARS * min(recency, 1.0))
 
 

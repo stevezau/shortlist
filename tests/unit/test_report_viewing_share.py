@@ -48,6 +48,7 @@ def watched(
     media_type: str = "movie",
     section_key: str = "1",
     title: str = "",
+    viewed_leaf_count: int | None = None,
 ):
     with sessions() as session:
         session.add(
@@ -61,6 +62,7 @@ def watched(
                 year=2020,
                 viewed_at=NOW - timedelta(days=days_ago),
                 source_viewed_at=None if source_days_ago is None else NOW - timedelta(days=source_days_ago),
+                viewed_leaf_count=viewed_leaf_count,
             )
         )
         session.commit()
@@ -230,6 +232,15 @@ class TestViewingShare:
         watched(sessions, user_id=1, tmdb_id=None, days_ago=5, rating_key=12, title="Home Video", section_key="4")
 
         assert share(sessions)["watched"] == 2
+
+    def test_a_show_only_played_earlier_is_not_a_watch(self, sessions):
+        """Issue #173: a show whose watched episodes were deleted is cached with 0 episodes and Plex's
+        kept date — and an Agregarr trailer play leaves the same row. Neither is a watch a row earned."""
+        pick(sessions, user_id=1, tmdb_id=9, watched_days_ago=None)
+        watched(sessions, user_id=1, tmdb_id=100, days_ago=2, media_type="show", viewed_leaf_count=0)
+        watched(sessions, user_id=1, tmdb_id=200, days_ago=2, media_type="show", viewed_leaf_count=3)
+
+        assert share(sessions)["watched"] == 1
 
     @pytest.mark.parametrize("window", ["7", "30", "90", "all"])
     def test_a_series_started_from_a_row_before_the_window_still_counts_while_they_watch_it(self, sessions, window):

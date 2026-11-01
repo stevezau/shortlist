@@ -375,10 +375,20 @@ def _viewing_share(session: Session, since: datetime | None) -> dict:
 
     when = func.coalesce(WatchedTitle.source_viewed_at, WatchedTitle.viewed_at)
     watched: set[tuple] = set()
-    for uid, tmdb_id, title, year, media, viewed in session.query(
-        WatchedTitle.user_id, WatchedTitle.tmdb_id, WatchedTitle.title, WatchedTitle.year, WatchedTitle.media_type, when
+    for uid, tmdb_id, title, year, media, viewed, episodes in session.query(
+        WatchedTitle.user_id,
+        WatchedTitle.tmdb_id,
+        WatchedTitle.title,
+        WatchedTitle.year,
+        WatchedTitle.media_type,
+        when,
+        WatchedTitle.viewed_leaf_count,
     ).filter(WatchedTitle.user_id.in_(list(start_for)), when >= earliest):
         if _as_utc(viewed) < start_for[uid]:
+            continue
+        if media == "show" and episodes == 0:
+            # Played earlier, episodes since deleted (#173): Plex keeps the show's old date, and an
+            # Agregarr trailer play leaves the same state. Not a watch the row could have earned.
             continue
         # A title Plex never matched to TMDB is still a title they watched; it just cannot be a pick. Keyed
         # on its name, not its ratingKey, which is only unique within one library — the same film in

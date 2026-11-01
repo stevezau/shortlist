@@ -8,6 +8,7 @@ the WRONG set, which no user-visible symptom would announce.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -1148,3 +1149,39 @@ class TestAFutureDateIsNeverKept:
         self._sync(cache, sessions, user_id, [show("Ahead", rating_key=6, viewed=8, leaf=8, watched_at=epoch)])
 
         assert self._viewed_at(sessions, user_id, 6) == epoch
+
+
+class TestAShowWhoseWatchedEpisodesWereDeleted:
+    """Issue #173. The read now returns a show whose watched episodes were deleted, with 0 watched
+    episodes and Plex's own date. The cache must keep it as exactly that: not re-date it, and hand it
+    back with its real count of 0 and one watch, so the engine counts it as started."""
+
+    def test_it_is_cached_with_its_real_count_and_date_and_read_back_as_one_watch(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        watched_at = datetime.now(UTC) - timedelta(days=700)
+        asked: list[set[int]] = []
+
+        def sync_show(viewed: int) -> None:
+            item = replace(show("Removed", rating_key=8, viewed=viewed, leaf=30, watched_at=watched_at), watch_count=1)
+            with sessions() as session:
+                cache.sync_section(
+                    session,
+                    profile(),
+                    user_id,
+                    SECTION,
+                    MediaType.SHOW,
+                    lambda since: WatchedRead(items=[item], covers_window=True),
+                    repair_dates=lambda keys: asked.append(set(keys)) or {},
+                    force_full=True,
+                    reconcile=True,
+                )
+                session.commit()
+
+        sync_show(5)  # five episodes watched
+        sync_show(0)  # then those five deleted: Plex keeps the show's date, the count falls to 0
+
+        with sessions() as session:
+            [item] = cache.watched_set(session, user_id)
+        assert (item.viewed_leaf_count, item.leaf_count, item.watch_count) == (0, 30, 1)
+        assert abs((item.watched_at - watched_at).total_seconds()) < 1, "a falling count must not re-date it"
+        assert asked == [], "a falling count is not a newly marked series"

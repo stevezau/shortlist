@@ -404,7 +404,9 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
                         title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
                     {t.age_weight != null && t.age_weight !== 1 && (
                       <span className="tabular-nums text-muted-foreground">
-                        release date &times;{t.age_weight.toFixed(2)}
+                        {t.age_weight > 1
+                          ? `release date +${Math.round((t.age_weight - 1) * 100)}% for age`
+                          : `release date \u00d7${t.age_weight.toFixed(2)}`}
                       </span>
                     )}
                     {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
@@ -473,7 +475,9 @@ function shortlistBody(
             )}
           </p>
           <p className="text-muted-foreground">
-            {entry.recency
+            {entry.recency && entry.recency < 0
+              ? `Release date leaned older by ${Math.round(-entry.recency * 100)}% here, so older titles scored higher than equally good newer ones — and it applied to the cut itself, not just the order, so an older title below the line could still get in.`
+              : entry.recency
               ? `Release date counted for ${Math.round(entry.recency * 100)}% here, so newer titles ranked above equally good older ones — and it applied to the cut itself, not just the order, so a newer title below the line could still get in.`
               : "Release date was ignored — a 1996 title and a 2024 one were judged the same."}
           </p>
@@ -1655,6 +1659,16 @@ function ReturnRow({ ret, media }: { ret: TraceReturn; media: string }) {
           )}% of an equivalent title from this year.`}
         >
           age ×{ret.age_weight.toFixed(2)}
+        </span>
+      )}
+      {ret.age_weight != null && ret.age_weight > 1 && (
+        <span
+          className="shrink-0 tabular-nums text-muted-foreground/80"
+          title={`Leaning older raised this title's score to ${Math.round(
+            ret.age_weight * 100,
+          )}% of an equivalent title from this year.`}
+        >
+          +{Math.round((ret.age_weight - 1) * 100)}% for age
         </span>
       )}
       {ret.fate !== undefined && !kept && (

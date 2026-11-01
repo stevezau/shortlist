@@ -85,7 +85,9 @@ export function recencyGlobal(settings: Settings | undefined): string | null {
   const pct = Math.round(fraction * 100);
   // "Any era" rather than a bare "0%": the number alone reads as a setting that is doing something
   // faint, when 0 means release date is not consulted at all.
-  if (pct <= 0) return "Any era — release date ignored";
+  if (pct <= -100) return "100% — strongly prefers older releases";
+  if (pct < 0) return `${-pct}% — leans towards older releases`;
+  if (pct === 0) return "Any era — release date ignored";
   if (pct >= 100) return "100% — strongly prefers new releases";
   return `${pct}% — leans towards recent releases`;
 }

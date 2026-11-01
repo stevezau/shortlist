@@ -360,7 +360,7 @@ VALIDATORS = {
     # quarterly row is a legitimate thing to want.
     "recommendations.refresh_days": _bounded_int(0, MAX_REFRESH_DAYS),
     "recommendations.idle_hold_days": _bounded_int(0, MAX_REFRESH_DAYS),
-    "recommendations.recency": _bounded_float(0.0, 1.0),
+    "recommendations.recency": _bounded_float(-1.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
     "recommendations.favourite_count": _bounded_int(0, 10),
     "recommendations.older_count": _bounded_int(0, 10),

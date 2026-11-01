@@ -158,6 +158,16 @@ def _watch_stamp(raw: str | None) -> int:
     return stamp
 
 
+def _show_was_watched(el: ET.Element) -> bool:
+    """Whether a show row says this person watched it: an episode watched now, or plays Plex still records.
+
+    The second covers a show whose watched episodes were deleted: Plex keeps the show's own `viewCount`
+    and reports `viewedLeafCount=0` (issue #173). A show marked watched has the first and not the second
+    (issue #108). See `pms_show_counters_after_deleting_episodes.json`.
+    """
+    return int(el.get("viewedLeafCount") or 0) > 0 or int(el.get("viewCount") or 0) > 0
+
+
 #: The identifier family Plex gives a COLLECTION's hub. Prefix only, and deliberately NOT a format.
 #: The two shapes recorded off a real PMS disagree about everything after it:
 #: `custom.collection.1.527794.527794` (section id, and the ratingKey DOUBLED —
@@ -2377,12 +2387,14 @@ class PlexClient:
 
         * **Movies** — ``unwatched=0``, i.e. ``viewCount>0``. Plex's own binary watched flag, which
           INCLUDES a mark-as-watched (the playback-history API never returns marks; issue #12).
-        * **Shows** — ``viewedLeafCount!=0``, NEVER ``unwatched=0``. The latter filters on the show's
-          own watch-state row, which marking a series or a season does not establish, so a finished
-          series is absent from it while its episode counts are correct. Measured on two servers:
-          533 shows against 491, the 491 matching the episode-level truth exactly. The filter is
-          applied again client-side, because an ignored query param on this endpoint is answered with
-          the whole library rather than an error.
+        * **Shows** — ``viewedLeafCount!=0`` OR ``unwatched=0``, in one read. Each half alone misses
+          shows. ``unwatched=0`` filters on the show's own watch-state row, which marking a series or a
+          season does not establish, so a series finished by marking is absent from it (issue #108:
+          533 shows against 491 on two servers). ``viewedLeafCount!=0`` counts only the episodes still
+          in the library, so a show whose watched episodes were deleted is absent from it while Plex
+          still records the show as played (issue #173). The filter is applied again client-side,
+          because an ignored query param on this endpoint is answered with the whole library rather
+          than an error.
 
         ``includeGuids=1`` inlines each item's ``tmdb://`` GUID, so a title resolves to its tmdb_id here
         with no dependency on the run's library index — the same on a sync as on a run (live-verified
@@ -2433,7 +2445,7 @@ class PlexClient:
         dropped = 0
         dropped_keys: set[str] = set()
         # Rows the SERVER should have filtered out and did not. A handful is normal; a library's
-        # worth means `viewedLeafCount!=0` was ignored and we are paging everything, which the
+        # worth means the show filter was ignored and we are paging everything, which the
         # client-side filter hides completely — the answer stays right, the cost silently multiplies.
         filtered_out = 0
         start = 0
@@ -2474,7 +2486,7 @@ class PlexClient:
                 # show in the library would read as watched and nothing would ever be recommended
                 # again. Filtering client-side makes the answer correct either way; an honoured
                 # filter just means fewer rows crossed the wire.
-                if media_type is MediaType.SHOW and int(el.get("viewedLeafCount") or 0) <= 0:
+                if media_type is MediaType.SHOW and not _show_was_watched(el):
                     filtered_out += 1
                     continue
                 item = self._watched_item(el, media_type)
@@ -2500,7 +2512,7 @@ class PlexClient:
                         # ENDING here; dropping the row as well made an incremental read report a
                         # show the full read had dated from its episodes as absent, which is
                         # indistinguishable from an un-watch and let `_drop_vanished_since` delete it.
-                        # `viewedLeafCount!=0` already proved it watched, so returning it is right.
+                        # The show filter already proved it watched, so returning it is right.
                         items.append(item)
                         continue
                     # Sorted newest-first, so everything from here on is older. Stop reading — this
@@ -2570,14 +2582,14 @@ class PlexClient:
         # right lifetime for "already said once".
         warned = self.__dict__.setdefault("_warned_unmatched", set())
         if filtered_out > len(items) and filtered_out > 10 and str(section_key) not in warned:
-            # More thrown away than kept: the server is not applying `viewedLeafCount!=0`, so every
+            # More thrown away than kept: the server is not applying the show filter, so every
             # sync pages the whole library instead of the watched part of it. Correctness is
             # unaffected — the filter is applied here too — but on a real server this is 4,880 rows
             # against 491, per person, per sync, with nothing else to show for it.
             warned.add(str(section_key))
             logger.warning(
-                "watched read: section {} — the server returned {} shows with nothing watched "
-                "alongside {} watched ones, so it is ignoring `viewedLeafCount!=0` and this read is "
+                "watched read: section {} — the server returned {} shows nobody watched "
+                "alongside {} watched ones, so it is ignoring the show filter and this read is "
                 "paging the whole library every time. Correct, but far more expensive than it needs "
                 "to be.",
                 section_key,
@@ -2857,26 +2869,25 @@ class PlexClient:
         params: dict[str, object] = {"type": plex_type, "includeGuids": 1}
         show_filter = ""
         if plex_type == 2:  # a show library
-            # `viewedLeafCount!=0`, NOT `unwatched=0`. The latter filters on the show's own
-            # watch-state row, which marking a series or a season never establishes — so a series
-            # someone has finished is absent from it while its episode counts are perfectly correct.
-            # Measured on two independent servers: `unwatched=0` returned 533 shows where
-            # `viewedLeafCount!=0` returned 491, matching the episode-level truth
-            # (`?type=4&unwatched=0` rolled up by show) EXACTLY, in both directions, and 20 shows with
-            # watched episodes were missing from `unwatched=0` altogether. Issue #108; the reporter
-            # found this filter independently.
+            # Shows with a watched episode in the library, OR shows Plex records as played. Each half
+            # alone misses shows, measured on real servers:
             #
-            # No new trust: `viewedLeafCount`/`leafCount` already drive the finished-show fraction
-            # everywhere else, so believing them about PRESENCE adds no assumption.
+            # * `unwatched=0` filters on the show's own watch-state row, which marking a series or a
+            #   season never establishes. `unwatched=0` returned 533 shows where `viewedLeafCount!=0`
+            #   returned 491, and 20 shows with watched episodes were missing from it (issue #108).
+            # * `viewedLeafCount!=0` counts only the episodes still in the library. Delete the watched
+            #   ones and the show keeps its own `viewCount`/`lastViewedAt` but reads 0 here, so a show
+            #   someone has watched looked untouched to a 0% row (issue #173: 62 of one owner's shows).
+            #
+            # `push`/`or`/`pop` group the two into one OR. On a 5,012-show library it returned exactly the
+            # 547-show union, for the owner and for each of ten shared tokens, and the sort still holds
+            # (`pms_watched_shows_either.xml.txt`). Without the brackets, `or=1` returned 5,953 rows.
             #
             # APPENDED to the URL, not passed through `params`, because Plex's filter OPERATOR lives
             # in the key and httpx percent-encodes a key: `params={"viewedLeafCount!": 0}` goes on the
-            # wire as `viewedLeafCount%21=0`. This server decodes that and answers 491 either way
-            # (measured), but plexapi's own `joinArgs` encodes only the VALUE for exactly this reason,
-            # and a server that did not decode it would fall back to the whole library — 4,880 rows
-            # instead of 491, per person, per library, per sync. Verified: the literal form
-            # round-trips intact and returns the same 491.
-            show_filter = "viewedLeafCount!=0"
+            # wire as `viewedLeafCount%21=0`. plexapi's own `joinArgs` encodes only the VALUE for exactly
+            # this reason, and a server that did not decode it would fall back to the whole library.
+            show_filter = "push=1&viewedLeafCount!=0&or=1&unwatched=0&pop=1"
         else:
             params["unwatched"] = 0
         if since is not None:
@@ -2954,7 +2965,9 @@ class PlexClient:
             year=int(year) if year else None,
             rating_key=int(el.get("ratingKey")) if el.get("ratingKey") else None,
             # Episodes watched is the frequency signal for a show — a 50-episode binge weighs like 50
-            # movie plays (see WatchedItem.watch_count). Floor at 1: unwatched=0 guarantees >0 viewed.
+            # movie plays (see WatchedItem.watch_count). Floor at 1: a show whose watched episodes were
+            # deleted reads 0 here, and is still one show they watched (issue #173). Its own `viewCount`
+            # counts plays, not episodes, so it must not stand in for the episode count.
             watch_count=max(1, viewed_leaf_count),
             viewed_leaf_count=viewed_leaf_count,
             leaf_count=int(leaf) if leaf else None,

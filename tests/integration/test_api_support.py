@@ -241,6 +241,52 @@ class TestTitleLookup:
         row = client.get("/api/support/title", params={"q": "Teacup"}).json()["rows"][0]
         assert row["counts_as_watched"] is False, "above 0% only a FINISHED show counts"
 
+    def test_a_show_whose_watched_episodes_were_deleted_answers_as_the_engine_does(self, client):
+        """Issue #173: the watched episodes are gone, so the record reads 0 of 30, but it exists only
+        because Plex records the show as played. The engine counts it as started (one watch), so at 0%
+        it is watched, and above 0% it is not finished. The tool must say the same, or it flags a
+        delivery the engine would never make."""
+        _seed_teacup(client.app, viewed=0, total=30, delivered=True)
+        _enable(client)
+
+        _set_row_cap(client.app, 0.0)
+        row = client.get("/api/support/title", params={"q": "Teacup"}).json()["rows"][0]
+        assert (row["viewed_leaf_count"], row["leaf_count"]) == (0, 30)
+        assert row["counts_as_watched"] is True, "at 0% a show they watched IS watched, episodes or not"
+
+        _set_row_cap(client.app, 0.4)
+        row = client.get("/api/support/title", params={"q": "Teacup"}).json()["rows"][0]
+        assert row["counts_as_watched"] is False, "above 0% it is not finished"
+
+    def test_a_show_finished_in_one_library_and_played_earlier_in_another_is_finished(self, client):
+        """Two copies of one show: finished in one library, its watched episodes deleted in the other
+        (#173). The engine keeps the furthest copy, so the tool must too, whichever row comes back last."""
+        _seed_teacup(client.app, viewed=8, total=8, delivered=True)
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter(User.slug == "sarah").one()
+            session.add(
+                WatchedTitle(
+                    user_id=user.id,
+                    section_key="2",
+                    rating_key=901,
+                    tmdb_id=226637,
+                    media_type="show",
+                    title="Teacup",
+                    year=2024,
+                    watch_count=1,
+                    viewed_leaf_count=0,
+                    leaf_count=8,
+                )
+            )
+            session.commit()
+        _enable(client)
+        _set_row_cap(client.app, 0.4)
+
+        row = client.get("/api/support/title", params={"q": "Teacup"}).json()["rows"][0]
+
+        assert row["viewed_leaf_count"] == 8
+        assert row["counts_as_watched"] is True
+
     def test_a_rewatch_row_keeps_the_finished_rule_even_at_zero(self, client):
         """A rewatch row is built FROM watched titles, so it never takes the 0% exclusion — and the
         tool must not claim otherwise."""

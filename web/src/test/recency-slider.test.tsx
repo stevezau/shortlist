@@ -7,7 +7,7 @@ const THIS_YEAR = new Date().getFullYear();
 
 describe("RecencySlider", () => {
   it("names the newest bar instead of printing a 100% that can never move", () => {
-    // Every bar is measured against a title released THIS YEAR, so the leftmost one is full at every
+    // Every bar is measured against a title released THIS YEAR, so the newest one is full at every
     // slider position. Labelling a fixed reference "100%" makes it look like a value that ought to
     // respond to the control — which is exactly how it was read.
     const { rerender } = render(
@@ -81,5 +81,64 @@ describe("RecencySlider", () => {
       <RecencySlider value={50} onChange={() => {}} />,
     );
     expect(container.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  describe("older side (#174)", () => {
+    it("spans -100..100 with the ends named", () => {
+      render(<RecencySlider value={0} onChange={() => {}} />);
+      const slider = screen.getByRole("slider", { name: /release date counts/i });
+      expect(slider).toHaveAttribute("min", "-100");
+      expect(slider).toHaveAttribute("max", "100");
+      expect(screen.getByText("Older")).toBeInTheDocument();
+      expect(screen.getByText("Ignore age")).toBeInTheDocument();
+      expect(screen.getByText("Newer")).toBeInTheDocument();
+    });
+
+    it("hands a negative percent back on drag", () => {
+      const onChange = vi.fn();
+      render(<RecencySlider value={0} onChange={onChange} />);
+      fireEvent.change(
+        screen.getByRole("slider", { name: /release date counts/i }),
+        { target: { value: "-35" } },
+      );
+      expect(onChange).toHaveBeenCalledWith(-35);
+    });
+
+    it("describes the lean in plain words, as a nudge and not a filter", () => {
+      render(<RecencySlider value={-100} onChange={() => {}} />);
+      expect(screen.getByText(/leans older/i)).toHaveTextContent(
+        /40-year-old title scores 32% higher/i,
+      );
+      expect(screen.getByText(/not a filter/i)).toBeInTheDocument();
+      expect(
+        screen.getByRole("slider", { name: /release date counts/i }),
+      ).toHaveAttribute("aria-valuetext", "100 percent towards older releases");
+    });
+
+    it("shows a negative value as how far it leans older, never as a minus", () => {
+      render(<RecencySlider value={-40} onChange={() => {}} />);
+      expect(screen.getByText("40% older")).toBeInTheDocument();
+      expect(screen.queryByText("-40%")).not.toBeInTheDocument();
+    });
+
+    it("labels every older bar as a boost, this year's as +0% (owner decision 2026-11-01)", () => {
+      render(<RecencySlider value={-100} onChange={() => {}} />);
+      expect(screen.getByText("+0%")).toBeInTheDocument();
+      expect(screen.queryByText("this year")).not.toBeInTheDocument();
+      expect(screen.getByText("+32%")).toBeInTheDocument();
+      expect(screen.getByText("+11%")).toBeInTheDocument();
+    });
+
+    it.each([-100, 0, 65])(
+      "draws the years oldest to newest, left to right, like the slider (value %i)",
+      (value) => {
+        render(<RecencySlider value={value} onChange={() => {}} />);
+        const years = screen
+          .getAllByText(/^\d{4}$/)
+          .map((n) => Number(n.textContent));
+        expect(years).toHaveLength(5);
+        expect(years).toEqual([...years].sort((a, b) => a - b));
+      },
+    );
   });
 });

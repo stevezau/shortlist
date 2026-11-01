@@ -28,6 +28,9 @@ export function watchDepth(item: WatchedTitle): string | null {
   if (item.media_type === "show") {
     if (item.leaf_count == null || item.viewed_leaf_count == null) return null;
     if (item.viewed_leaf_count >= item.leaf_count) return "finished";
+    // Listed with no episode watched: Plex records the show as played, but the watched episodes
+    // are no longer in the library (#173). "0 of N" would claim the opposite.
+    if (item.viewed_leaf_count === 0) return "watched before";
     return `${item.viewed_leaf_count} of ${item.leaf_count} episodes`;
   }
   return item.watch_count > 1 ? `watched ${item.watch_count}×` : null;

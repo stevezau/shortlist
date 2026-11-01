@@ -276,9 +276,8 @@ class TestWatchedTitles:
         assert item.watch_count == 30  # episodes watched drives a show's frequency weight
         params = respx.calls.last.request.url.params
         assert params["type"] == "2"  # show
-        # `viewedLeafCount!=0`, never `unwatched=0` — see issue #108.
-        assert params["viewedLeafCount!"] == "0"
-        assert "unwatched" not in params
+        # Never `unwatched=0` ALONE (issue #108): it is OR'd with `viewedLeafCount!=0` (issue #173).
+        assert "push=1&viewedLeafCount!=0&or=1&unwatched=0&pop=1" in respx.calls.last.request.url.query.decode()
 
     @respx.mock
     def test_a_title_with_no_tmdb_guid_is_dropped(self, mock_plex: PlexClient):
@@ -826,28 +825,30 @@ class TestWatchedWindowCoverage:
         assert mock_plex.watched_titles("2", MediaType.SHOW, "TOK").dropped_no_guid == 0
 
     @respx.mock
-    def test_the_show_read_asks_for_viewedLeafCount_not_unwatched(self, mock_plex):
-        """Issue #108, at the seam that causes it.
+    def test_the_show_read_asks_for_watched_episodes_OR_a_played_show(self, mock_plex):
+        """Issues #108 and #173, at the seam that causes them. Each half alone misses shows.
 
         `unwatched=0` filters on the SHOW's own watch-state row, which marking a series or a season
-        never establishes — so a series someone has finished is absent from that read while its
-        episode counts are perfectly correct. Measured on two independent servers: `unwatched=0`
-        returned 533 shows where `viewedLeafCount!=0` returned 491, matching the episode-level truth
-        exactly in both directions, with 20 shows missing from `unwatched=0` altogether.
+        never establishes — so a series someone has finished by marking it is absent (#108: 533 shows
+        against 491 on two servers). `viewedLeafCount!=0` counts only episodes still in the library, so a
+        show whose watched episodes were deleted is absent from it while Plex still records the show as
+        played (#173: 62 of one owner's shows). `push`/`or`/`pop` ask for either in one read, and on a
+        real server it returned exactly the union (`pms_watched_shows_either.xml.txt`).
 
-        A MOVIE library still uses `unwatched=0` — a film has no episodes beneath it, so there is no
-        second record to go missing, which is exactly why movies were never affected.
+        A MOVIE library still uses `unwatched=0` alone — a film has no episodes beneath it, so there
+        is no second record to go missing.
         """
         self._mock_url(mock_plex)
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page([], size=0, total=0)))
 
         mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
-        show_params = respx.calls.last.request.url.params
+        show_query = respx.calls.last.request.url.query.decode()
         mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
         movie_params = respx.calls.last.request.url.params
 
-        assert show_params["viewedLeafCount!"] == "0" and "unwatched" not in show_params
+        assert "push=1&viewedLeafCount!=0&or=1&unwatched=0&pop=1" in show_query
         assert movie_params["unwatched"] == "0" and "viewedLeafCount!" not in movie_params
+        assert "or" not in movie_params
 
     @respx.mock
     def test_the_show_filter_reaches_the_wire_UNENCODED(self, mock_plex):
@@ -893,15 +894,66 @@ class TestWatchedWindowCoverage:
             '<Directory ratingKey="5003" type="show" title="No Counts" year="2018" leafCount="6">'
             '<Guid id="tmdb://333"/></Directory>'
         )
+        # Issue #173: no episode watched now, but Plex still records the show as played.
+        episodes_removed = (
+            f'<Directory ratingKey="5004" type="show" title="Episodes Removed" year="2017" leafCount="12" '
+            f'viewedLeafCount="0" viewCount="2" lastViewedAt="{self._NOW}"><Guid id="tmdb://444"/></Directory>'
+        )
         self._mock_url(mock_plex)
-        body = watched + never_touched + no_attribute_at_all
+        body = watched + never_touched + no_attribute_at_all + episodes_removed
         respx.get(self._URL).mock(
-            return_value=httpx.Response(200, text=f'<MediaContainer size="3" totalSize="3">{body}</MediaContainer>')
+            return_value=httpx.Response(200, text=f'<MediaContainer size="4" totalSize="4">{body}</MediaContainer>')
         )
 
         items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
 
-        assert [i.tmdb_id for i in items] == [111], "a show with no watched episodes was counted as watched"
+        assert [i.tmdb_id for i in items] == [111, 444], "a show nobody played was counted, or a played one lost"
+
+    @respx.mock
+    def test_a_show_whose_watched_episodes_were_deleted_still_counts_as_watched(self, mock_plex):
+        """Issue #173. Watched episodes deleted, other episodes still present: Plex keeps the show's
+        `viewCount` and `lastViewedAt` and reports `viewedLeafCount=0`. It is a show they have watched.
+
+        It arrives with its real count of 0, never an invented one, and one watch — the show's own
+        play count can run into the hundreds and must not read as episodes watched.
+        """
+        removed = (
+            f'<Directory ratingKey="5001" type="show" title="Episodes Removed" year="2015" leafCount="30" '
+            f'viewedLeafCount="0" viewCount="33" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{removed}</MediaContainer>')
+        )
+
+        item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
+
+        assert item.tmdb_id == 111
+        assert (item.viewed_leaf_count, item.leaf_count, item.watch_count) == (0, 30, 1)
+        assert int(item.watched_at.timestamp()) == self._NOW
+
+    @respx.mock
+    def test_it_parses_the_recorded_either_read_from_a_real_server(self, mock_plex):
+        """Replays `pms_watched_shows_either.xml.txt` (plex-safety rule 11): a played show, a series
+        marked watched with no show counters, and a show whose watched episodes are gone. All three
+        are shows the person has watched, so all three come back."""
+        self._mock_url(mock_plex)
+        recorded = (FIXTURES / "pms_watched_shows_either.xml.txt").read_text()
+
+        def answer(request):
+            if request.url.params.get("type") == "4":  # the marked series' episode-date repair
+                return httpx.Response(200, text='<MediaContainer size="0" totalSize="0"></MediaContainer>')
+            return httpx.Response(200, text=recorded)
+
+        respx.get(self._URL).mock(side_effect=answer)
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
+
+        assert [(i.tmdb_id, i.viewed_leaf_count, i.leaf_count) for i in items] == [
+            (700001, 2, 23),
+            (700002, 8, 8),
+            (700003, 0, 30),
+        ]
 
     @respx.mock
     def test_a_series_marked_watched_comes_back_even_with_no_show_level_stamp(self, mock_plex):

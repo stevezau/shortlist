@@ -1,0 +1,46 @@
+{
+  "_what": "Measurement log, not a single response. Issue #173: what a show's own counters do when its watched episodes are deleted, and when a person un-watches it.",
+  "_how": "Throwaway PMS 1.43.5.11029-6bf8af3f0 (plexinc/pms-docker), unclaimed, read and written as the local admin. One Personal Media TV library (agent tv.plex.agents.none), four shows of four 10-second episodes. Writes were /:/scrobble, /:/unscrobble and file deletion followed by a scan and emptyTrash. Each state was read from /library/metadata/{show}, /library/sections/1/all?type=2 with each filter, and /library/onDeck. The container was deleted afterwards. Recorded 2026-10-30.",
+  "states": [
+    {
+      "action": "play episodes 1 and 2",
+      "show": {"viewCount": 2, "viewedLeafCount": 2, "leafCount": 4, "lastViewedAt": "set"},
+      "in_unwatched_0": true, "in_viewedLeafCount_ne_0": true, "on_deck": true
+    },
+    {
+      "action": "play episodes 1 and 2, then delete both files, scan, empty trash",
+      "show": {"viewCount": 2, "viewedLeafCount": 0, "leafCount": 2, "lastViewedAt": "kept"},
+      "in_unwatched_0": true, "in_viewedLeafCount_ne_0": false, "on_deck": true,
+      "note": "The #173 state, Continue Watching included. Re-adding one of the deleted files did not bring its watched state back (a fresh item under this agent)."
+    },
+    {
+      "action": "the deleted-episodes show above, then 'Mark as unwatched' on the SERIES",
+      "show": {"viewCount": null, "viewedLeafCount": 0, "lastViewedAt": null},
+      "in_unwatched_0": false, "in_viewedLeafCount_ne_0": false, "on_deck": true,
+      "note": "A series un-watch clears the show's counters, so the show leaves both halves of the read. On Deck keeps a stale entry."
+    },
+    {
+      "action": "play episodes 1 and 2, then 'Mark as unwatched' on the SERIES",
+      "show": {"viewCount": null, "viewedLeafCount": 0, "lastViewedAt": null},
+      "in_unwatched_0": false, "in_viewedLeafCount_ne_0": false, "on_deck": false
+    },
+    {
+      "action": "play episodes 1 and 2, then 'Mark as unwatched' on each EPISODE",
+      "show": {"viewCount": 2, "viewedLeafCount": 0, "lastViewedAt": "kept"},
+      "in_unwatched_0": true, "in_viewedLeafCount_ne_0": false, "on_deck": false,
+      "note": "Unmarking episodes one by one leaves the show's counters behind, so the show still reads as played. The way to make a show count as unstarted again is the series-level un-watch."
+    },
+    {
+      "action": "'Mark as watched' on the SERIES, nothing played",
+      "show": {"viewCount": null, "viewedLeafCount": 4, "lastViewedAt": null},
+      "in_unwatched_0": false, "in_viewedLeafCount_ne_0": true, "on_deck": false,
+      "note": "The #108 shape: marks set episode counts and no show counters."
+    }
+  ],
+  "production_read_only_2026_10_30": {
+    "server": "PMS 1.43.x, one show library of 5,012 shows",
+    "owner": {"viewedLeafCount_ne_0": 485, "unwatched_0": 528, "union": 547, "grouped_or_read": 547, "played_with_no_watched_episode": 62},
+    "of_the_62": {"every_present_episode_added_after_show_lastViewedAt": 54, "last_viewed_over_a_year_ago": 61, "of_40_read_episode_by_episode_with_any_watched_episode": 0},
+    "shared_accounts_read_with_their_own_token": {"accounts": 10, "grouped_read_equal_to_union_for_each": 10, "played_with_no_watched_episode": [18, 5, 24, 8, 0, 0, 2, 0, 0, 0], "overlap_with_owner_set_at_most": 1}
+  }
+}

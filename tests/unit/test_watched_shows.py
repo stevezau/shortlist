@@ -4,8 +4,11 @@ not be recommended back to a user (issue #12: in-progress shows were being recom
 The counts are Plex's OWN per-user ``viewedLeafCount`` / ``leafCount`` (marks included), passed to
 ``watched_titles`` as ``{tmdb_id: (viewed_episodes, total_episodes)}``."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
+
+import pytest
 
 from shortlist.engine.models import MediaType, WatchedItem
 from shortlist.engine.rows import RowPolicy, _engaged_floor, watched_titles
@@ -110,17 +113,17 @@ class TestWhatAZeroPctRowExcludes:
     def _excluded(watched_movies: set[int], watched_shows: dict[int, tuple[int, int | None]]):
         """The real `RowPolicy.zero_pct_exclusions`, assembled without a whole engine context.
 
-        `SimpleNamespace` rather than a constructed RowPolicy: the method reads exactly three
-        attributes, and building the real dataclass would need a context, a config and a user for no
-        extra coverage of the thing under test.
+        A real RowPolicy bypassing ``__init__``: the method reads three attributes and calls
+        `RowPolicy.started`, and building the dataclass would need a context, a config and a user for
+        no extra coverage of the thing under test.
         """
-        from types import SimpleNamespace
-
         from shortlist.engine.rows import RowPolicy, watched_titles
 
-        finished = watched_titles(watched_movies, watched_shows, 0.8)
-        stub = SimpleNamespace(watched_titles=finished, watched_shows=watched_shows)
-        return RowPolicy.zero_pct_exclusions(stub)
+        stub = object.__new__(RowPolicy)
+        stub.watched_titles = watched_titles(watched_movies, watched_shows, 0.8)
+        stub.watched_shows = watched_shows
+        stub.played_earlier = set()
+        return stub.zero_pct_exclusions()
 
     def test_a_show_one_episode_in_is_excluded(self):
         """The reported bug. Two of eight is under the old 3-episode floor and was therefore offered
@@ -230,3 +233,63 @@ class TestBreakdownAcrossLibraryCopies:
 
         assert policy.watched_shows[500] == (3, 28)
         assert (500, MediaType.SHOW) not in policy.watched_titles
+
+
+class TestAShowWhoseWatchedEpisodesWereDeleted:
+    """Issue #173. The watched episodes are gone, so Plex reports 0 watched, but still records the show
+    as played, and the read returns it with its real count of 0. That proves the person STARTED it and
+    nothing more — an Agregarr trailer play leaves the same state once the trailer is cleaned up — so a
+    0% row and an unstarted-only row leave it out, and nothing treats it as finished or seeds from it."""
+
+    @staticmethod
+    def _gone(leaf_count: int) -> WatchedItem:
+        return WatchedItem(
+            title="Episodes Removed",
+            media_type=MediaType.SHOW,
+            watched_at=datetime(2026, 10, 1, tzinfo=UTC),
+            tmdb_id=700,
+            viewed_leaf_count=0,
+            leaf_count=leaf_count,
+            watch_count=1,
+        )
+
+    def test_the_profile_keeps_it_out_of_history_and_sets_it_aside(self):
+        """`history` feeds taste, seeds, the cold-start count and the AI prompt. A recent trailer play
+        must not become this person's freshest seed."""
+        from shortlist.engine.models import UserProfile, UserType
+
+        watched = replace(self._gone(30), title="Watching", tmdb_id=701, viewed_leaf_count=3)
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED)
+
+        profile.take_history([watched, self._gone(30)])
+
+        assert [i.tmdb_id for i in profile.history] == [701]
+        assert [i.tmdb_id for i in profile.played_earlier] == [700]
+
+    @pytest.mark.parametrize("leaf_count", [30, 1])
+    def test_it_counts_as_started_and_never_as_finished(self, leaf_count):
+        """`leaf_count=1` is the case a "one watch" stand-in would get wrong: 1 of 1 reads as finished,
+        so a rewatch row would offer it, a request would read as watched, and a >0% cap would count it."""
+        profile = MagicMock(history=[], played_earlier=[self._gone(leaf_count)])
+        policy = TestBreakdownAcrossLibraryCopies._policy([])
+        policy.user = profile
+
+        policy.load_watched_breakdown()
+        policy.mark_finished_titles()
+
+        assert (700, MediaType.SHOW) in policy.zero_pct_exclusions(), "a 0% row would recommend it back"
+        assert (700, MediaType.SHOW) in policy.started(), "an unstarted-only row would recommend it back"
+        assert (700, MediaType.SHOW) not in policy.watched_titles, "counted as finished"
+        assert 700 not in policy.watched_shows, "visible to the finished-title rules"
+
+    def test_one_left_in_history_is_still_only_started(self):
+        """A caller that assigns `history` directly bypasses `take_history`. The breakdown sorts it the
+        same way, so the rules cannot depend on every caller remembering."""
+        policy = TestBreakdownAcrossLibraryCopies._policy([self._gone(1)])
+        policy.user.played_earlier = []
+
+        policy.load_watched_breakdown()
+        policy.mark_finished_titles()
+
+        assert (700, MediaType.SHOW) in policy.started()
+        assert (700, MediaType.SHOW) not in policy.watched_titles

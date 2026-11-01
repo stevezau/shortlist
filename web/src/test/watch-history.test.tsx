@@ -95,6 +95,14 @@ describe("watchDepth", () => {
     );
   });
 
+  it("says watched before when none of the episodes now in the library are watched", () => {
+    // Issue #173: the watched episodes were deleted, and Plex still records the show as played.
+    // "0 of 30 episodes" would read as never watched, the opposite of why it is listed.
+    expect(watchDepth(title({ viewed_leaf_count: 0, leaf_count: 30 }))).toBe(
+      "watched before",
+    );
+  });
+
   it("says nothing when Plex reports no episode totals", () => {
     // NOT "0 of 0" — "we don't know how many episodes there are" is a different claim from
     // "they've watched none of it", and only the second would justify a progress figure.

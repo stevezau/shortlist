@@ -77,10 +77,11 @@ function readPercent(
   settings: Settings,
   key: string,
   fallback: number,
+  min = 0,
 ): number {
   const value = Number(settings[key]);
   if (!Number.isFinite(value)) return fallback;
-  return Math.round(Math.min(1, Math.max(0, value)) * 100);
+  return Math.round(Math.min(1, Math.max(min, value)) * 100);
 }
 
 /** A global setting that is already a whole number in its own units (days, counts). */
@@ -146,7 +147,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     ),
   );
   const [recency, setRecency] = useState<number>(() =>
-    readPercent(settings, "recommendations.recency", RECENCY_DEFAULT),
+    readPercent(settings, "recommendations.recency", RECENCY_DEFAULT, -1),
   );
   const [recentCount, setRecentCount] = useState<number>(() => {
     const value = Number(settings["recommendations.recent_count"]);
@@ -266,7 +267,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   });
   const mRecency = mark("recommendations.recency", recency, {
     fromDefault: asPercent,
-    label: (pct) => `${pct}% preference`,
+    label: (pct) => (pct < 0 ? `${-pct}% older` : `${pct}% preference`),
     reset: setRecency,
   });
   const mIdle = mark("recommendations.idle_hold_days", idleHoldDays, {
@@ -376,7 +377,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
           <SettingBlock title="Already-watched titles" htmlFor="watched-pct" modified={mWatched} description="How much of a row may be familiar." value={`Up to ${watchedPct}%`}>
             <WatchedSlider id="watched-pct" value={watchedPct} onChange={setWatchedPct} />
           </SettingBlock>
-          <SettingBlock title="Recent releases" htmlFor="recency" modified={mRecency} description="Give newer titles more weight without filtering older ones out." value={`${recency}% preference`}>
+          <SettingBlock title="Recent releases" htmlFor="recency" modified={mRecency} description="Lean towards newer or older releases without filtering anything out." value={recency < 0 ? `${-recency}% older` : `${recency}% preference`}>
             <RecencySlider id="recency" value={recency} onChange={setRecency} />
           </SettingBlock>
           <SettingDisclosure title="More recommendation controls" value="Show" description="Watch history, ratings and inactive viewers. Plex ratings are server-wide and do not change shared rows.">

@@ -86,7 +86,14 @@ Settings → Defaults → Refresh & variety has five more dials, each of which a
 - **Recent releases.** How much a title's **release date** counts when Shortlist ranks it. At
   `0.0` release date is ignored entirely: a well-rated 1996 film and a well-rated 2024 one are
   judged the same, which is why rows can fill up with older titles. Turn it up and newer titles rank
-  higher.
+  higher. Turn it **below zero** (the slider's left half, **Older**) and older titles rank higher
+  instead: at the far left a 40-year-old title scores about 32% higher than an equally good one from
+  this year, and no title is ever boosted by more than 50%.
+
+  This is a preference, not a filter. It only reorders titles your sources already found, so it cannot
+  bring in an old title that TMDB never suggested, and it never removes anything. To rule eras out,
+  use the row's **minimum year** and **maximum year**. For a show, age is its first-air year, so a
+  series that started in 1999 counts as old.
 
   The default is `0.5` — "leans towards recent releases". Age-blind is not the neutral setting it
   looks like: a library holds decades of catalog against a trickle of new releases, so a ranker with
