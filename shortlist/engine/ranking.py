@@ -66,6 +66,11 @@ def recency_factor(year: int | None, year_now: int, recency: float) -> float:
     still have to win on rating, seed frequency and affinity like everything else; being spared a
     penalty is not the same as being promoted past a title that outscores them.
 
+    Leaning OLDER the same 1.0 is the lowest factor rather than the best: an undated title is treated
+    as brand-new on both sides, so it gets no age boost. Accepted, not overlooked (#174 release review,
+    2026-11-01): none of the 92,598 candidates in the production replay lacked a year, and inventing an
+    age to boost would be the same guess this docstring rejects for the newer side.
+
     Args:
         year: The title's release year (a show's first-air year), or None if unknown.
         year_now: The year the run belongs to, from ``EngineContext.run_day``. 0 disables.
