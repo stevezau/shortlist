@@ -247,6 +247,7 @@ class TestUsers:
                 "auto_approve_movies": True,
                 "auto_approve_tv": True,
                 "is_plex_user": True,
+                "plex_id": 111111,
             },
             {
                 "id": 4,
@@ -255,6 +256,7 @@ class TestUsers:
                 "auto_approve_tv": False,
                 # userType 2 — a local account made inside Overseerr, not a person on the server.
                 "is_plex_user": False,
+                "plex_id": None,
             },
             {
                 "id": 7,
@@ -262,6 +264,7 @@ class TestUsers:
                 "auto_approve_movies": False,
                 "auto_approve_tv": False,
                 "is_plex_user": True,
+                "plex_id": 222222,
             },
         ]
 

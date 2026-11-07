@@ -3,9 +3,11 @@
 Two sources, merged so a title counts once per person and row. Overseerr's request list covers requests that
 are still there; Radarr/Sonarr requester tags (``<seerrUserId>-<username>``, written by Seerr's
 "Tag Requests" and never removed when the request is deleted — fixture ``radarr_request_tags.json``)
-cover the ones an owner tidied away. A person is only ever identified by Plex account ID: an
-Overseerr tag resolves through Overseerr's user list, an own-pattern tag through the roster, and a
-tag that fits nobody or two people is reported, never guessed — a wrong guess puts one person's
+cover the ones an owner tidied away. A person is identified by Plex account ID, or by an Overseerr
+account the owner chose for them by hand (``UserProfile.seerr_user_id``, for a local account, a managed
+profile, or a person who asks as one account and watches as another): an Overseerr tag resolves through
+Overseerr's user list, an own-pattern tag through the roster, and a tag that fits nobody or two people
+is reported, never guessed — a wrong guess puts one person's
 requests in another person's private row.
 """
 
@@ -30,7 +32,9 @@ if TYPE_CHECKING:
     # rows.py imports this module; a runtime import here would close the cycle.
     from shortlist.engine.rows import RowPolicy
 
-REQUESTER_TAG = re.compile(r"^(\d+)\s?-\s?\S")
+# The name may be empty: Seerr's MediaRequestSubscriber.sanitizeDisplayName strips every character outside
+# [a-z0-9-], so an account whose name has no Latin letters is tagged just `12-`.
+REQUESTER_TAG = re.compile(r"^(\d+)\s?-")
 # Seerr's enums: MediaRequestStatus and MediaStatus (server/constants/media.ts).
 _REQ_APPROVED, _REQ_COMPLETED = 2, 5
 _MEDIA_AVAILABLE = 5
@@ -162,7 +166,13 @@ def collect_requests(
     """
     ledger = RequestLedger(titles=[], complete=True)
     by_plex = {p.plex_account_id: p for p in people}
-    seerr_plex: dict[int, int | None] = {}
+    # Overseerr user id -> the person the owner chose for it. An account two people claim maps to nobody:
+    # the database forbids that, but a wrong guess here would put one person's requests in another's row.
+    chosen: dict[int, int | None] = {}
+    for p in people:
+        if p.seerr_user_id:
+            chosen[p.seerr_user_id] = None if p.seerr_user_id in chosen else p.plex_account_id
+    seerr_plex: dict[int, int | None] = dict(chosen)
     seerr_client = seerr or (SeerrClient(sources.overseerr) if sources.overseerr else None)
     # (media, tmdb id, person) -> pattern -> title. Pattern "" holds in every requests row the person
     # has; any other only in the rows using that pattern.
@@ -204,8 +214,11 @@ def collect_requests(
 
     if seerr_client is not None:
         try:
-            seerr_plex = seerr_client.user_plex_ids()
-            ledger.seerr_plex_ids = {pid for pid in seerr_plex.values() if pid is not None}
+            read = seerr_client.user_plex_ids()
+            seerr_plex = {**read, **chosen}
+            # Only accounts Overseerr still has: a chosen one since deleted keeps crediting its tags, but
+            # "linked" would contradict the picker, which says the account is gone.
+            ledger.seerr_plex_ids = {pid for uid, pid in seerr_plex.items() if pid is not None and uid in read}
             rows = seerr_client.requests()
             ledger.seerr_servers = [
                 {
@@ -217,7 +230,7 @@ def collect_requests(
                 for kind, servers in seerr_client.arr_settings().items()
                 for s in servers
             ]
-            if not rows and not seerr_plex:
+            if not rows and not read:
                 # A Seerr with an admin has at least one user, so this shape is a broken read.
                 ledger.complete = False
                 ledger.unreadable.add("Overseerr")
@@ -227,7 +240,7 @@ def collect_requests(
             ledger.seerr_requesters = len(requesters)
             ledger.seerr_linked = len({u for u in requesters if seerr_plex.get(u) in by_plex})
             for r in rows:
-                t = _from_seerr_request(r, seerr_plex, by_plex, sources.exclude_seerr_user_id)
+                t = _from_seerr_request(r, seerr_plex, chosen, by_plex, sources.exclude_seerr_user_id)
                 if t is not None:
                     add(t)
         except Exception as e:
@@ -321,7 +334,11 @@ def _merge_tag_matches(matches: list[TagMatch]) -> list[TagMatch]:
 
 
 def _from_seerr_request(
-    r: dict, seerr_plex: dict[int, int | None], by_plex: dict[int, UserProfile], exclude_uid: int
+    r: dict,
+    seerr_plex: dict[int, int | None],
+    chosen: dict[int, int | None],
+    by_plex: dict[int, UserProfile],
+    exclude_uid: int,
 ) -> RequestedTitle | None:
     who = r.get("requestedBy") if isinstance(r.get("requestedBy"), dict) else {}
     uid = who.get("id")
@@ -329,7 +346,8 @@ def _from_seerr_request(
         return None
     if r.get("status") not in (_REQ_APPROVED, _REQ_COMPLETED):
         return None
-    plex_id = _int_or_none(who.get("plexId")) or seerr_plex.get(uid)
+    # A chosen account is the owner's word and beats the account's own Plex link, even when it names nobody.
+    plex_id = seerr_plex.get(uid) if uid in chosen else seerr_plex.get(uid) or _int_or_none(who.get("plexId"))
     if plex_id not in by_plex:
         return None
     media = r.get("media") if isinstance(r.get("media"), dict) else {}
@@ -388,6 +406,18 @@ def _add_tagged(
     owner_of: dict[int, tuple[UserProfile | None, str, tuple[str, ...], bool]] = {}
     warned_seerr = False
     for tag_id, label in tags.items():
+        uid = parse_requester_tag(label)
+        if (
+            seerr_connected
+            and uid is not None
+            and sources.exclude_seerr_user_id
+            and uid == sources.exclude_seerr_user_id
+        ):
+            # The account Shortlist files its own requests as: its tag rides on every title we added, and
+            # its requests are left out of the Overseerr read for the same reason. Before the override
+            # check, so a person's `requested_by_tag` naming it can't hand them the owner's titles.
+            owner_of[tag_id] = (None, "overseerr", ("",), False)
+            continue
         if _norm(label) in override:
             # Before the Overseerr-format branch: an owner who typed `12-sarah` on a person meant that
             # person, whether or not Overseerr is connected to say who user 12 is.
@@ -395,7 +425,6 @@ def _add_tagged(
             claimants = override[_norm(label)]
             owner_of[tag_id] = (claimants[0] if len(claimants) == 1 else None, "override", ("",), len(claimants) > 1)
             continue
-        uid = parse_requester_tag(label)
         if uid is not None:
             # The number is a Seerr user id, meaningful only through Seerr's user list — the name
             # after it is whatever the person was called when the tag was made, never a key.
@@ -406,11 +435,6 @@ def _add_tagged(
                         "so they can't be traced to a person"
                     )
                     warned_seerr = True
-                continue
-            if sources.exclude_seerr_user_id and uid == sources.exclude_seerr_user_id:
-                # The account Shortlist files its own requests as: its tag rides on every title we
-                # added, and its requests are already left out of the Overseerr read for the same reason.
-                owner_of[tag_id] = (None, "overseerr", ("",), False)
                 continue
             plex_id = seerr_plex.get(uid)
             owner_of[tag_id] = (by_plex.get(plex_id), "overseerr", ("",), False)

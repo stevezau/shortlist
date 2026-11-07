@@ -9385,6 +9385,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "plex_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plex Id"
           }
         },
         "required": [
@@ -11319,6 +11330,10 @@
             "title": "Restriction Profile",
             "type": "string"
           },
+          "seerr_user_id": {
+            "title": "Seerr User Id",
+            "type": "integer"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -11352,6 +11367,7 @@
           "cold_start",
           "request_tag",
           "requested_by_tag",
+          "seerr_user_id",
           "prefs",
           "history_depth",
           "last_run_at",
@@ -11433,6 +11449,18 @@
               }
             ],
             "title": "Requested By Tag"
+          },
+          "seerr_user_id": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seerr User Id"
           }
         },
         "title": "UserPatch",

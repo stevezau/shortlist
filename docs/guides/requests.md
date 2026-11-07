@@ -456,21 +456,27 @@ editor's **Where requests are read from** panel shows each source's state, wheth
 for each server, how many titles the tags credit to someone, and how many people on your server are
 linked to an Overseerr account.
 
-**People are matched by Plex account, and nothing else.** An Overseerr account is linked to a person
-when it signed in with the same Plex account; a tag names that account through Overseerr. A tag that
-fits nobody, or that two people could both claim, is ignored and listed in the panel, because a wrong
-guess would put one person's requests in another person's private row. The **Users** page has a
-**Requests** column that says where each person stands: **Linked**, **No account** (nobody in
-Overseerr signed in as them), **Can't use Overseerr** (a Home profile can't sign in to Overseerr at
-all), or the tag they've been given by hand.
+**People are matched by their Plex sign-in, or by an account you choose.** An Overseerr account is
+linked to a person automatically when it signed in with the same Plex account; a tag names that
+account through Overseerr. That needs no action. When it doesn't fit, open the person's page, go to
+**Settings**, and pick their account under **Overseerr account**. You need this when they use a local
+Overseerr account, when they are a managed profile (which can't sign in to Overseerr), or when you
+request as one account and watch on another, such as your own admin account and a profile of yours.
+(An Overseerr user can also link their Plex account themselves under _Profile → Linked Accounts_, if
+the email matches.) The account you choose counts as that person's, in place of whoever it signed in
+as, and one account can belong to one person. Shortlist never guesses a match from a name or an
+email. A tag that fits nobody, or that two people could both claim, is ignored and listed in the
+panel, because a wrong guess would put one person's requests in another person's private row. The
+**Users** page has a **Requests** column that says where each person stands: **Linked**, or **Not
+linked** (click it to choose their account), plus the tag they've been given by hand.
 
 **Use my own tags.** If you tag requests yourself in Radarr/Sonarr rather than through Overseerr,
 open **Use my own tags** in the editor and give the row a **tag pattern** such as `req-{username}`:
 `{username}` is their Plex username, `{name}` their name in Shortlist. Matching ignores case, and
 spaces count as dashes, which is how Radarr and Sonarr store a tag. Press **Check** to see every tag
 the pattern (or Overseerr) matched and who it belongs to, before anything is saved. For a tag that
-fits no pattern, a person's own page has **Tag their requests already carry**, which credits that
-one tag to them. Overseerr's tags are still read alongside either. Titles Shortlist requested itself —
+fits no pattern, a person's own page has **Tag on their requests in Radarr/Sonarr**, which credits that
+one tag to them. For Overseerr, choose their account instead. Overseerr's tags are still read alongside either. Titles Shortlist requested itself —
 carrying its own request tag, or filed by the **Request as** account in Overseerr — never count as
 anyone's request.
 

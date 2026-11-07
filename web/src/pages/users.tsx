@@ -320,17 +320,35 @@ function RequestsCell({
     return tag || readyNote ? cell(null, readyNote) : null;
   }
   if (person?.linked) {
-    return cell(<Badge variant="success" title="Requests linked to their Overseerr account">Linked</Badge>, readyNote);
-  }
-  if (user.user_type === "managed") {
     return cell(
-      <Badge variant="secondary">Can’t use Overseerr</Badge>,
-      "Managed profiles can’t sign in to it",
+      <Badge
+        variant="success"
+        title={
+          user.seerr_user_id
+            ? "Requests linked to the Overseerr account you chose by hand"
+            : "Requests linked to their Overseerr account"
+        }
+      >
+        Linked
+      </Badge>,
+      readyNote,
     );
   }
   return cell(
-    <Badge variant="secondary">No account</Badge>,
-    "Hasn’t signed in to Overseerr",
+    <Link
+      to={`/users/${user.id}?tab=settings`}
+      className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <Badge variant="secondary">Not linked</Badge>
+    </Link>,
+    [
+      user.user_type === "managed"
+        ? "Choose their local Overseerr account"
+        : "Choose their Overseerr account",
+      readyNote,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   );
 }
 

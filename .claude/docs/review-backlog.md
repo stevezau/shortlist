@@ -9,6 +9,19 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 
 ## OPEN
 
+**Chosen Overseerr accounts (#181, Architecture Review 2026-11-08):**
+
+- MED: `users.seerr_user_id` stores a bare Overseerr id, so if Overseerr is reinstalled or reset and gives
+  the ids out again, one person's requests land in another person's private row. Example: Kid is given
+  local account 7, Overseerr is rebuilt, and 7 is now Sarah's Plex account. The chosen id beats the
+  account's own Plex link, so Sarah's own row loses those titles. Fix: store something that identifies the
+  account when it is chosen (its `createdAt`, plexId and username), and at run time treat a mismatch as
+  "not chosen" plus a ledger problem. Deferred because it needs an Overseerr read on save and a second
+  column, against a rare cause.
+- LOW: `PATCH /api/users/{id}` writes no `events` row for any field, and this was already true before #181.
+  The new release of a departed person's account is only logged. Rule 10 wants "who took which account
+  from whom" answerable from Activity.
+
 **Dependency advisories (build-time only, never in the image):**
 
 - `braces`: no patched release yet (latest is 3.0.3). Re-run `pnpm -C web audit` and bump when one ships.

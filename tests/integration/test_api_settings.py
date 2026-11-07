@@ -636,6 +636,7 @@ class TestSettingsApi:
                 "auto_approve_movies": True,
                 "auto_approve_tv": True,
                 "is_plex_user": True,
+                "plex_id": 111111,
             },
             {
                 "id": 4,
@@ -643,6 +644,7 @@ class TestSettingsApi:
                 "auto_approve_movies": False,
                 "auto_approve_tv": False,
                 "is_plex_user": False,
+                "plex_id": None,
             },
         ]
         monkeypatch.setattr("shortlist.engine.clients.seerr.SeerrClient.users", lambda self: users)

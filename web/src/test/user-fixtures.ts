@@ -18,6 +18,7 @@ export function makeUser(patch: Partial<User> = {}): User {
     last_run_at: null,
     request_tag: "",
     requested_by_tag: "",
+    seerr_user_id: 0,
     picks_watched_30d: null,
     last_pick_watched_at: null,
     nickname: "",

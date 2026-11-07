@@ -91,6 +91,8 @@ class UserPatch(BaseModel):
     request_tag: str | None = Field(default=None, max_length=64)  # tag added to titles requested for this user
     # The tag the *arrs put on what this person asked for (issue #127); wins over a row's tag pattern.
     requested_by_tag: str | None = Field(default=None, max_length=64)
+    # The Overseerr account this person's requests come from (issue #181); 0 = automatic, by Plex sign-in.
+    seerr_user_id: int | None = Field(default=None, ge=0)
     prefs: UserPrefs | None = None
 
 

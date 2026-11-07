@@ -299,7 +299,7 @@ function RequestSourcesPanel({ sources }: { sources: RowSources }) {
 }
 
 /** The own-tag preview: every tag the pattern (or Overseerr) matched, and who it belongs to. */
-function TagPreview({ tags }: { tags: RowSources["tags"] }) {
+function TagPreview({ tags, overseerrRead }: { tags: RowSources["tags"]; overseerrRead: boolean }) {
   if (tags.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -327,7 +327,16 @@ function TagPreview({ tags }: { tags: RowSources["tags"] }) {
                   <span className="text-xs text-muted-foreground">Fits more than one person</span>
                 </div>
               ) : (
-                tag.display_name || <Badge variant="secondary">No one</Badge>
+                tag.display_name || (
+                  <div className="flex flex-col items-start gap-0.5">
+                    <Badge variant="secondary">No one</Badge>
+                    {tag.source === "overseerr" && overseerrRead && (
+                      <span className="text-xs text-muted-foreground">
+                        Choose this account on the person&rsquo;s page
+                      </span>
+                    )}
+                  </div>
+                )
               )}
             </TableCell>
             <TableCell className="text-right">{tag.titles}</TableCell>
@@ -460,7 +469,10 @@ export function YourRequestsBlock(props: KindBlockProps) {
               read automatically alongside this.
             </p>
           </div>
-          {sources.data && <TagPreview tags={sources.data.tags} />}
+          {sources.data && (
+            // During an Overseerr outage every Overseerr tag names nobody; the outage is the cause.
+            <TagPreview tags={sources.data.tags} overseerrRead={sources.data.overseerr === "connected"} />
+          )}
         </details>
       )}
 

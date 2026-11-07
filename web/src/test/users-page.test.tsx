@@ -577,10 +577,11 @@ describe("UsersPage — the Requests column", () => {
 
     const linked = await screen.findByText("Linked");
     expect(linked.closest("td")).toHaveTextContent("2 ready");
-    const none = screen.getByText("No account");
+    const none = screen.getByText("Not linked");
     expect(none.closest("td")).toHaveTextContent(
-      "Hasn’t signed in to Overseerr",
+      "Choose their Overseerr account",
     );
+    expect(none.closest("a")).toHaveAttribute("href", `/users/${MIKE.id}?tab=settings`);
   });
 
   it("does not tell a managed profile to sign in — it can't", async () => {
@@ -591,11 +592,11 @@ describe("UsersPage — the Requests column", () => {
 
     renderPage();
 
-    const badge = await screen.findByText("Can’t use Overseerr");
+    const badge = await screen.findByText("Not linked");
     expect(badge.closest("td")).toHaveTextContent(
-      "Managed profiles can’t sign in to it",
+      "Choose their local Overseerr account",
     );
-    expect(screen.queryByText("No account")).toBeNull();
+    expect(badge.closest("td")).not.toHaveTextContent(/sign in/i);
   });
 
   it("shows a person's own request tag beside their Overseerr state", async () => {
@@ -607,7 +608,7 @@ describe("UsersPage — the Requests column", () => {
     renderPage();
 
     expect(await screen.findByText("Tag: children")).toBeInTheDocument();
-    expect(screen.getByText("Can’t use Overseerr")).toBeInTheDocument();
+    expect(screen.getByText("Not linked")).toBeInTheDocument();
   });
 
   it("shows a dash that says why when Overseerr can't be read", async () => {
@@ -621,7 +622,7 @@ describe("UsersPage — the Requests column", () => {
     expect(
       await screen.findByTitle("Couldn’t read the request sources"),
     ).toHaveTextContent("—");
-    expect(screen.queryByText("No account")).toBeNull();
+    expect(screen.queryByText("Not linked")).toBeNull();
   });
 
   it("blames the Arrs, not Overseerr, when the failed read had only Radarr and Sonarr to talk to", async () => {
@@ -670,8 +671,8 @@ describe("UsersPage — the Requests column", () => {
     const dashes = await screen.findAllByLabelText("Couldn’t read Overseerr");
     expect(dashes).toHaveLength(2);
     for (const dash of dashes) expect(dash).toHaveTextContent("—");
-    expect(screen.queryByText("No account")).toBeNull();
-    expect(screen.queryByText("Can’t use Overseerr")).toBeNull();
+    expect(screen.queryByText("Not linked")).toBeNull();
+    expect(screen.queryByText(/Choose their/)).toBeNull();
   });
 
   it("says no request source is connected once, at the top, rather than once per person", async () => {
@@ -694,7 +695,7 @@ describe("UsersPage — the Requests column", () => {
       "/settings/connections",
     );
     expect(screen.queryByTitle("No request source connected")).toBeNull();
-    expect(screen.queryByText("No account")).toBeNull();
+    expect(screen.queryByText("Not linked")).toBeNull();
   });
 
   it("does not blame the person for a missing account when only Radarr/Sonarr are connected", async () => {
@@ -715,7 +716,7 @@ describe("UsersPage — the Requests column", () => {
 
     const tag = await screen.findByText("Tag: sarah-asked");
     expect(tag.closest("td")).toHaveTextContent("3 ready");
-    expect(screen.queryByText("No account")).toBeNull();
+    expect(screen.queryByText("Not linked")).toBeNull();
     // Mike has no tag and nothing ready, so with Overseerr off his line is absent, not a dash.
     expect(screen.queryByTitle("Overseerr isn’t connected")).toBeNull();
     expect(screen.queryByText(/isn’t connected/)).toBeNull();
@@ -734,7 +735,7 @@ describe("UsersPage — the Requests column", () => {
     expect(
       within(row).getByTestId("requests-loading"),
     ).toBeInTheDocument();
-    expect(within(row).queryByText("No account")).toBeNull();
+    expect(within(row).queryByText("Not linked")).toBeNull();
   });
 });
 

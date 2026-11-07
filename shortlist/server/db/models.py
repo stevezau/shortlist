@@ -144,9 +144,16 @@ class User(Base):
     # The tag Overseerr/Radarr/Sonarr put on what THIS person asked for (issue #127) — wins over a row's
     # `requests_tag_pattern` for them. "" -> the pattern, or no tag match at all.
     requested_by_tag: Mapped[str] = mapped_column(String(64), default="", nullable=False, server_default="")
+    # The Overseerr user the owner chose for this person (issue #181); 0 = automatic, by Plex sign-in.
+    seerr_user_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     prefs: Mapped[dict] = mapped_column(JSON, default=dict)
 
     run_users: Mapped[list[RunUser]] = relationship(back_populates="user")
+
+    # One Overseerr account belongs to one person; 0 ("automatic") is shared by everybody who hasn't chosen.
+    __table_args__ = (
+        Index("ux_users_seerr_user_id", "seerr_user_id", unique=True, sqlite_where=text("seerr_user_id != 0")),
+    )
 
     @property
     def display_name(self) -> str:

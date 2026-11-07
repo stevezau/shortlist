@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import and_, select
 
 from shortlist.server.api.seasons import DateRuleIO, PickIO, SeasonIn
@@ -50,6 +51,9 @@ class PersonPrefs(UserPrefs):
 class PersonPatch(UserPatch):
     model_config = ConfigDict(extra="forbid", strict=True)
     prefs: PersonPrefs | None = None
+    # Choosing an Overseerr account moves the requests of whoever it belongs to — a person outside this
+    # grant (#181) — so it is the owner's call on the person's page. Typed None: any value is refused.
+    seerr_user_id: SkipJsonSchema[None] = None
 
 
 class PersonRowOverride(RowOverridePatch, StrictModel):
