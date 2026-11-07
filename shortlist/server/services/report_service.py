@@ -717,7 +717,9 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
             entry["watched_at"] = watched
             entry["row"], entry["library"] = slug, library
             row_from[key] = (_as_utc(created), slug)
-        elif watched and watched == entry["watched_at"]:
+        elif (
+            watched
+            and watched == entry["watched_at"]
             # A TIE is the normal case here, not an edge: `_apply_outcomes` stamps the identical
             # `watched_at` onto every delivery row that was showing the title. With a strict `<` the
             # winner is whichever row the database happened to return first, and this query has no
@@ -726,9 +728,10 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
             #
             # Earliest delivery wins: the row that first put the title in front of them is the one
             # that earned the watch. Slug breaks a same-instant tie so the answer is total.
-            if (_as_utc(created), slug) < row_from.get(key, (_as_utc(created), slug)):
-                entry["row"], entry["library"] = slug, library
-                row_from[key] = (_as_utc(created), slug)
+            and (_as_utc(created), slug) < row_from.get(key, (_as_utc(created), slug))
+        ):
+            entry["row"], entry["library"] = slug, library
+            row_from[key] = (_as_utc(created), slug)
         if finished and (entry["finished_at"] is None or finished > entry["finished_at"]):
             entry["finished_at"] = finished
         if percent is not None and (entry["percent"] is None or percent > entry["percent"]):

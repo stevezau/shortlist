@@ -24,7 +24,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.db.session import make_engine
 from shortlist.server.services.watch_events import RowMembership
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import disposing_engine, insert_legacy
 from tests.unit.test_migrations import _alembic
 
 pytestmark = pytest.mark.real_migrations
@@ -38,11 +38,13 @@ def legacy(tmp_path: Path) -> Iterator[Session]:
     with disposing_engine(make_engine(tmp_path)) as engine:
         assert not sa.inspect(engine).has_table("row_delivery_snapshots")
         with Session(engine) as session:
-            session.add_all(
+            insert_legacy(
+                session,
+                User,
                 [
-                    User(id=1, plex_account_id=101, username="Alice", slug="alice"),
-                    User(id=2, plex_account_id=202, username="Bob", slug="bob"),
-                ]
+                    {"id": 1, "plex_account_id": 101, "username": "Alice", "slug": "alice"},
+                    {"id": 2, "plex_account_id": 202, "username": "Bob", "slug": "bob"},
+                ],
             )
             session.commit()
             yield session
@@ -333,6 +335,9 @@ def test_0102_migrated_show_is_visible_to_the_runtime_membership_reader(legacy: 
     )
 
     _upgrade(legacy, tmp_path)
+    # The runtime reader maps today's models, so it reads the schema the app runs on, not 0102's.
+    command.upgrade(_alembic(tmp_path), "head")
+    legacy.expire_all()
     membership = RowMembership(legacy)
     user = legacy.get(User, 1)
     when = START + timedelta(hours=1)
