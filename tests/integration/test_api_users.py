@@ -43,6 +43,7 @@ USER_KEYS = {
     "cold_start",
     "request_tag",
     "requested_by_tag",
+    "seerr_user_id",
     "prefs",
     "history_depth",
     "last_run_at",
@@ -1828,6 +1829,58 @@ def test_requested_by_tag_round_trips(client: TestClient):
     r = client.patch(f"/api/users/{uid}", json={"requested_by_tag": " children "})
     assert r.status_code == 200 and r.json()["requested_by_tag"] == "children"
     assert next(u for u in client.get("/api/users").json() if u["id"] == uid)["requested_by_tag"] == "children"
+
+
+class TestChosenOverseerrAccount:
+    """The Overseerr account the owner picks for a person (issue #181); 0 = automatic."""
+
+    @staticmethod
+    def _ids(client: TestClient) -> dict[str, int]:
+        return {u["username"]: u["id"] for u in client.get("/api/users").json()}
+
+    def test_it_round_trips_and_zero_clears_it(self, client: TestClient):
+        uid = self._ids(client)["sarah"]
+        assert client.get("/api/users").json()[0]["seerr_user_id"] == 0
+
+        r = client.patch(f"/api/users/{uid}", json={"seerr_user_id": 12})
+        assert r.status_code == 200 and r.json()["seerr_user_id"] == 12
+        assert next(u for u in client.get("/api/users").json() if u["id"] == uid)["seerr_user_id"] == 12
+
+        r = client.patch(f"/api/users/{uid}", json={"seerr_user_id": 0})
+        assert r.status_code == 200 and r.json()["seerr_user_id"] == 0
+
+    def test_a_negative_id_is_refused(self, client: TestClient):
+        uid = self._ids(client)["sarah"]
+        assert client.patch(f"/api/users/{uid}", json={"seerr_user_id": -1}).status_code == 422
+
+    def test_an_account_another_person_holds_is_refused_naming_them(self, client: TestClient):
+        ids = self._ids(client)
+        assert client.patch(f"/api/users/{ids['sarah']}", json={"seerr_user_id": 12}).status_code == 200
+
+        r = client.patch(f"/api/users/{ids['mike']}", json={"seerr_user_id": 12})
+
+        assert r.status_code == 409
+        assert r.json()["detail"] == "That Overseerr account is already linked to sarah."
+        assert next(u for u in client.get("/api/users").json() if u["id"] == ids["mike"])["seerr_user_id"] == 0
+
+    def test_saving_your_own_account_again_is_not_a_clash(self, client: TestClient):
+        uid = self._ids(client)["sarah"]
+        client.patch(f"/api/users/{uid}", json={"seerr_user_id": 12})
+        assert client.patch(f"/api/users/{uid}", json={"seerr_user_id": 12}).status_code == 200
+
+    @pytest.mark.parametrize("gone", ["departed_at", "removed_at"])
+    def test_a_departed_or_removed_holder_gives_the_account_up(self, client: TestClient, gone: str):
+        ids = self._ids(client)
+        client.patch(f"/api/users/{ids['sarah']}", json={"seerr_user_id": 12})
+        with client.app.state.sessions() as session:
+            session.get(User, ids["sarah"]).__setattr__(gone, datetime.now(UTC))
+            session.commit()
+
+        r = client.patch(f"/api/users/{ids['mike']}", json={"seerr_user_id": 12})
+
+        assert r.status_code == 200 and r.json()["seerr_user_id"] == 12
+        with client.app.state.sessions() as session:
+            assert session.get(User, ids["sarah"]).seerr_user_id == 0
 
 
 def _seed_user_with_runs(session, slug: str, finished: datetime, *, account_id: int) -> list[str]:

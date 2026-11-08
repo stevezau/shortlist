@@ -352,6 +352,8 @@ class SeerrUserOut(PassthroughModel):
     # True for a real person on the server, false for a local account made inside Overseerr. Drives
     # the grouping in the picker — see the note on `is_plex_user` in the client.
     is_plex_user: bool = False
+    # The Plex account this Overseerr account signs in as (None for a local account).
+    plex_id: int | None = None
 
 
 class SeerrOptionsOut(PassthroughModel):

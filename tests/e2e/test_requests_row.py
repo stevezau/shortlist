@@ -162,7 +162,7 @@ def test_a_requests_row_reaches_only_the_person_who_asked_when_built_from_the_te
 
     # (e) The Users page reads the same sources: sarah is linked, mike has no Overseerr account.
     page.goto("/users")
-    for username, status in (("sarah", "Linked"), ("mike", "No account")):
+    for username, status in (("sarah", "Linked"), ("mike", "Not linked")):
         person = page.get_by_role("row").filter(has=page.get_by_role("link", name=username, exact=True))
         expect(person.get_by_text(status, exact=True)).to_be_visible(timeout=CHECK)
 

@@ -28,7 +28,7 @@ from shortlist.server.db.models import (
     User,
 )
 from shortlist.server.db.session import make_engine
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import disposing_engine, insert_legacy
 from tests.unit.test_migrations import _alembic
 
 pytestmark = pytest.mark.real_migrations
@@ -154,9 +154,10 @@ def test_0109_preserves_existing_rows_indexes_and_foreign_keys_and_prevents_reus
                         id=42, slug="preserved", name="Preserved", enabled=False, poster={"mode": "text"}
                     )
                 )
-                user = User(id=12, plex_account_id=112, username="Person", slug="person")
-                theme = Theme(id=7, slug="saved-theme", name="Saved theme")
-                session.add_all([user, theme])
+                insert_legacy(
+                    session, User, [{"id": 12, "plex_account_id": 112, "username": "Person", "slug": "person"}]
+                )
+                session.add(Theme(id=7, slug="saved-theme", name="Saved theme"))
                 session.flush()
                 session.add_all(
                     [

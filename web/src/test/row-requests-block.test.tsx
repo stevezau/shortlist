@@ -8,7 +8,7 @@
  * that the tag preview says plainly when a tag fits more than one person.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
@@ -186,6 +186,20 @@ describe("YourRequestsBlock", () => {
     expect(within(rows[1]!).getByText("4")).toBeInTheDocument();
     expect(within(rows[2]!).getByText("No one")).toBeInTheDocument();
     expect(within(rows[2]!).getByText("Fits more than one person")).toBeInTheDocument();
+  });
+
+  it("points an Overseerr tag nobody holds at the person's page, but not while Overseerr can't be read", async () => {
+    const unheld = { label: "12-sarah", source: "overseerr" as const, user_id: null, display_name: "", titles: 1, ambiguous: false };
+    getRequestRowSources.mockResolvedValue({ ...CONNECTED, tags: [unheld] });
+    renderBlock(requestsRow());
+    expect(await screen.findByText("Choose this account on the person’s page")).toBeInTheDocument();
+    cleanup();
+
+    // During an outage every Overseerr tag names nobody: the cause is the outage, not a missing choice.
+    getRequestRowSources.mockResolvedValue({ ...CONNECTED, overseerr: "unreachable", tags: [unheld] });
+    renderBlock(requestsRow());
+    expect(await screen.findByText("12-sarah")).toBeInTheDocument();
+    expect(screen.queryByText("Choose this account on the person’s page")).toBeNull();
   });
 
   it("repeats the server's problems word for word", async () => {

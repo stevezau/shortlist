@@ -85,7 +85,7 @@ def _sonarr(items=None) -> MagicMock:
 
 class TestTagParsing:
     @pytest.mark.parametrize(
-        "label,expected", [("12-sarah", 12), ("12 - sarah", 12), ("12-", None), ("sarah", None), ("requested", None)]
+        "label,expected", [("12-sarah", 12), ("12 - sarah", 12), ("12-", 12), ("sarah", None), ("requested", None)]
     )
     def test_parse_requester_tag(self, label, expected):
         assert parse_requester_tag(label) == expected
@@ -506,6 +506,167 @@ def _after(barrier: threading.Barrier, value: object):
         return value
 
     return read
+
+
+class TestChosenOverseerrAccount:
+    """The owner picks the Overseerr account for a person (issue #181): the account's own Plex link is not needed."""
+
+    MOVIE = next(r for r in REQS["results"] if r["type"] == "movie" and r["status"] == 5)
+
+    def _request(self, uid: int, plex_id: int | None, **kw) -> dict:
+        who = {**self.MOVIE["requestedBy"], "id": uid, "plexId": plex_id}
+        return {**self.MOVIE, "requestedBy": who, **kw}
+
+    def _landed(self, ledger: RequestLedger) -> set[tuple[int, int]]:
+        return {(t.tmdb_id, t.plex_account_id) for t in ledger.titles}
+
+    def _tagged_movie(self, labels: list[str], tmdb_id: int = 777, **kw):
+        tags = [{"id": i, "label": label} for i, label in enumerate(labels, start=1)]
+        item = {
+            "tmdbId": tmdb_id,
+            "tags": [t["id"] for t in tags],
+            "hasFile": True,
+            "movieFile": {"dateAdded": "2026-09-01T00:00:00Z"},
+            "title": "T",
+        }
+        return _radarr(items=[item], tags=tags)
+
+    def test_a_local_account_chosen_for_a_shared_person_is_credited_with_no_tag_anywhere(self):
+        sarah = _person(1, seerr_user_id=30)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR),
+            [sarah],
+            seerr=_seerr(requests=[self._request(30, None)], users={30: None}),
+        )
+        assert self._landed(ledger) == {(self.MOVIE["media"]["tmdbId"], sarah.plex_account_id)}
+        assert ledger.seerr_plex_ids == {sarah.plex_account_id}
+
+    def test_a_chosen_account_overseerr_no_longer_has_does_not_read_as_linked(self):
+        # Its tags still credit them (a tag outlives the account), but "Linked" would contradict the
+        # picker, which says the account is gone.
+        sarah = _person(1, seerr_user_id=30)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            [sarah],
+            seerr=_seerr(requests=[], users={1: 99}),
+            radarr=self._tagged_movie(["30-gone"]),
+        )
+        assert self._landed(ledger) == {(777, sarah.plex_account_id)}
+        assert ledger.seerr_plex_ids == {99}  # account 1's own Plex link, and not sarah's
+
+    def test_overseerr_down_keeps_chosen_tags_credited_and_the_read_incomplete(self):
+        sarah = _person(1, seerr_user_id=30)
+        seerr = _seerr()
+        seerr.user_plex_ids.side_effect = SeerrError("down")
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            [sarah, _person(2)],
+            seerr=seerr,
+            radarr=self._tagged_movie(["30-sarah", "31-mike"]),
+        )
+        assert ledger.complete is False
+        assert self._landed(ledger) == {(777, sarah.plex_account_id)}
+        assert {m.label: m.plex_account_id for m in ledger.tag_matches} == {
+            "30-sarah": sarah.plex_account_id,
+            "31-mike": None,
+        }
+
+    def test_a_managed_person_gets_their_chosen_accounts_requests(self):
+        kid = UserProfile(username="kid", plex_account_id=555, user_type=UserType.MANAGED, slug="kid", seerr_user_id=30)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR),
+            [kid],
+            seerr=_seerr(requests=[self._request(30, None)], users={30: None}),
+        )
+        assert self._landed(ledger) == {(self.MOVIE["media"]["tmdbId"], 555)}
+
+    def test_the_admins_account_handed_to_a_profile_credits_the_profile_and_not_the_owner(self):
+        owner = UserProfile(username="steve", plex_account_id=99, user_type=UserType.OWNER, slug="steve")
+        kid = UserProfile(username="kid", plex_account_id=555, user_type=UserType.MANAGED, slug="kid", seerr_user_id=1)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR),
+            [owner, kid],
+            seerr=_seerr(requests=[self._request(1, 99)], users={1: 99}),
+        )
+        assert self._landed(ledger) == {(self.MOVIE["media"]["tmdbId"], 555)}
+        assert ledger.seerr_plex_ids == {555}
+
+    def test_an_unchosen_account_still_follows_its_own_plex_link(self):
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR),
+            [_person(1), _person(2, seerr_user_id=30)],
+            seerr=_seerr(requests=[self._request(5, 100001)], users={5: 100001, 30: None}),
+        )
+        assert self._landed(ledger) == {(self.MOVIE["media"]["tmdbId"], 100001)}
+
+    def test_a_tag_only_title_of_the_chosen_account_is_credited_as_overseerr(self):
+        sarah = _person(1, seerr_user_id=12)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            [sarah],
+            seerr=_seerr(requests=[], users={12: None}),
+            radarr=self._tagged_movie(["12-sarah"]),
+        )
+        assert self._landed(ledger) == {(777, sarah.plex_account_id)}
+        (match,) = ledger.tag_matches
+        assert (match.source, match.plex_account_id, match.titles) == ("overseerr", sarah.plex_account_id, 1)
+
+    def test_a_title_carrying_shortlists_tag_and_the_chosen_accounts_tag_is_credited(self):
+        sarah = _person(1, seerr_user_id=12)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR, shortlist_tag="shortlist"),
+            [sarah],
+            seerr=_seerr(requests=[], users={12: None}),
+            radarr=self._tagged_movie(["12-sarah", "shortlist"]),
+        )
+        assert self._landed(ledger) == {(777, sarah.plex_account_id)}
+
+    def test_a_show_whose_requested_season_has_not_landed_is_not_ready(self):
+        tv = next(r for r in REQS["results"] if r["type"] == "tv")
+        waiting = {
+            **tv,
+            "requestedBy": {**tv["requestedBy"], "id": 30, "plexId": None},
+            "status": 2,
+            "seasons": [dict(tv["seasons"][0], status=2)],
+        }
+        sarah = _person(1, seerr_user_id=30)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR), [sarah], seerr=_seerr(requests=[waiting], users={30: None})
+        )
+        (t,) = ledger.for_person(sarah.plex_account_id)
+        assert t.seasons_landed is False
+
+    def test_the_request_as_account_beats_a_requested_by_tag_naming_its_tag(self):
+        steve = _person(1, requested_by_tag="1-steve")
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR, exclude_seerr_user_id=1),
+            [steve],
+            seerr=_seerr(requests=[], users={1: None}),
+            radarr=self._tagged_movie(["1-steve"]),
+        )
+        assert ledger.titles == []
+        (match,) = ledger.tag_matches
+        assert (match.source, match.plex_account_id) == ("overseerr", None)
+
+    def test_a_tag_with_no_name_after_the_dash_reads_as_that_account(self):
+        """Seerr strips every character outside [a-z0-9-] from the name, so a non-Latin name leaves `12-`."""
+        sarah = _person(1, seerr_user_id=12)
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            [sarah],
+            seerr=_seerr(requests=[], users={12: None}),
+            radarr=self._tagged_movie(["12-"]),
+        )
+        assert self._landed(ledger) == {(777, sarah.plex_account_id)}
+
+    def test_two_people_claiming_one_account_credit_nobody(self):
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            [_person(1, seerr_user_id=30), _person(2, seerr_user_id=30)],
+            seerr=_seerr(requests=[self._request(30, 100001)], users={30: 100001}),
+            radarr=self._tagged_movie(["30-someone"]),
+        )
+        assert ledger.titles == []
 
 
 class TestTheSourcesAreReadAtOnce:

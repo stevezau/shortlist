@@ -7284,6 +7284,8 @@ export interface components {
             is_plex_user: boolean;
             /** Name */
             name: string;
+            /** Plex Id */
+            plex_id?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -8130,6 +8132,8 @@ export interface components {
             restricted: boolean;
             /** Restriction Profile */
             restriction_profile: string;
+            /** Seerr User Id */
+            seerr_user_id: number;
             /** Slug */
             slug: string;
             /** Unhidden Rows */
@@ -8153,6 +8157,8 @@ export interface components {
             request_tag?: string | null;
             /** Requested By Tag */
             requested_by_tag?: string | null;
+            /** Seerr User Id */
+            seerr_user_id?: number | null;
         };
         /**
          * UserPickOut

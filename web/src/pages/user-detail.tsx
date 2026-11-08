@@ -13,6 +13,7 @@ import { UserDetailHeader } from "@/components/user-detail/user-detail-header";
 import { UserNickname } from "@/components/user-detail/user-nickname";
 import { UserRequestTag } from "@/components/user-detail/user-request-tag";
 import { UserRequestedByTag } from "@/components/user-detail/user-requested-by-tag";
+import { UserSeerrAccount } from "@/components/user-detail/user-seerr-account";
 import { UserRowsSection } from "@/components/user-detail/user-row-card";
 import { UserSharing } from "@/components/user-detail/user-sharing";
 import { PickOutcomes } from "@/components/user-detail/pick-outcomes";
@@ -113,6 +114,7 @@ export function UserDetailBody({ user }: { user: User }) {
             <section className="space-y-3">
               <UserNickname user={user} />
             </section>
+            <UserSeerrAccount user={user} />
             <section aria-labelledby="user-tags-heading" className="space-y-3">
               <h2 id="user-tags-heading" className="text-lg font-semibold">Sonarr and Radarr tags</h2>
               <UserRequestTag user={user} />

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import HTTPException
+from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -66,6 +67,28 @@ def reject_display_name_clash(session: Session, user: User, nickname: str) -> No
             )
 
 
+def claim_seerr_account(session: Session, user: User, seerr_user_id: int) -> None:
+    """Hand an Overseerr account to ``user``, refusing one a current person already holds.
+
+    The unique index on ``users.seerr_user_id`` allows one holder, so an account a departed or removed
+    person still points at is released here, in the caller's transaction, before it is reassigned.
+
+    Raises:
+        HTTPException: 409 naming the person who holds the account.
+    """
+    if not seerr_user_id:
+        return
+    for other in session.query(User).filter(User.id != user.id, User.seerr_user_id == seerr_user_id):
+        if other.departed_at is None and other.removed_at is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"That Overseerr account is already linked to {other.display_name}.",
+            )
+        logger.info("Overseerr account {} released from departed {} for {}", seerr_user_id, other.slug, user.slug)
+        other.seerr_user_id = 0
+    session.flush()
+
+
 @dataclass(frozen=True)
 class PersonMutation:
     user_id: int
@@ -109,6 +132,9 @@ def prepare_person_in_session(session: Session, user_id: int, patch) -> PersonMu
         value = getattr(patch, key)
         if value is not None and value.strip() != (getattr(user, key) or ""):
             values[key] = value.strip()
+    if patch.seerr_user_id is not None and patch.seerr_user_id != user.seerr_user_id:
+        claim_seerr_account(session, user, patch.seerr_user_id)
+        values["seerr_user_id"] = patch.seerr_user_id
     if patch.prefs is not None:
         prefs = merged_prefs(user.prefs or {}, patch.prefs)
         if prefs != (user.prefs or {}):

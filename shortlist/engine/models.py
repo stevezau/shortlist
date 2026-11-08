@@ -426,6 +426,8 @@ class UserProfile:
     row_overrides: dict[str, RowOverride] = field(default_factory=dict)
     # A Radarr/Sonarr tag that marks THIS person's requests when it fits no pattern (set on their Users page).
     requested_by_tag: str = ""
+    # The Overseerr account the owner chose for this person; 0 = automatic, by that account's Plex sign-in.
+    seerr_user_id: int = 0
 
     def __post_init__(self) -> None:
         if not self.slug:

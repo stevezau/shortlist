@@ -12,7 +12,7 @@ const users: User[] = Array.from({ length: 35 }, (_, index) => ({
   id: index + 1, username: `person${String(index + 1).padStart(2, "0")}`, display_name: `Viewer ${index + 1}`,
   slug: `person${index + 1}`, user_type: index === 32 ? "owner" : "shared", enabled: index !== 33,
   prefs: index === 34 ? { paused: true } : {}, manage_sharing: true, restricted: false,
-  cold_start: false, history_depth: 10, last_run_at: null, request_tag: "", requested_by_tag: "",
+  cold_start: false, history_depth: 10, last_run_at: null, request_tag: "", requested_by_tag: "", seerr_user_id: 0,
   picks_watched_30d: null, last_pick_watched_at: null, nickname: "", friendly_name: "", avatar_url: "",
   plex_account_id: index + 1, restriction_profile: "", unhidden_rows: 0, departed: false, preview_titles: [],
 }));

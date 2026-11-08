@@ -21,7 +21,7 @@ profile; a paused person can still have their Enabled switch on.
 Account type, request-link status and picks watched stay visible beside each person's identity.
 Picks watched is how many different picks they watched in the last 30 days; hover it for when they
 last watched one. The column that shows Active, Paused, Off or Restricted is headed **Status**. A
-**Requests** column says whether each person is linked to an Overseerr account. A Privacy column
+**Requests** column says whether each person is linked to an Overseerr account; for someone who isn't, it links to their **Settings** tab, where you can choose their account by hand. A Privacy column
 says whether the account is hiding every row, is missing hide rules, is left alone by your choice,
 or is the server owner. **Select visible users** and **Sort** sit above the roster at every screen
 width. **All users…** closes with Escape or an outside click; its Enable/Disable actions still

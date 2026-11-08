@@ -11,11 +11,11 @@ export function UserRequestedByTag({ user }: { user: User }) {
       user={user}
       field="requested_by_tag"
       id="user-requested-by-tag"
-      label="Tag their requests already carry"
+      label="Tag on their requests in Radarr/Sonarr"
       placeholder="e.g. children"
       maxLength={64}
       errorText="Couldn’t save this tag. Try again."
-      help="Only for a Your requests row: finds what they asked for when their tag isn’t the row’s pattern, e.g. children. Leave blank to use the pattern."
+      help="For a Your requests row when you tag requests yourself, e.g. children. For Overseerr, choose their account above instead."
       helpClassName="text-sm text-muted-foreground"
     />
   );

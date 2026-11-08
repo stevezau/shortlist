@@ -860,11 +860,17 @@ def reconcile_watched(
             # who has watched nothing are indistinguishable here, and wrongly wiping real history is
             # far worse than leaving one stale credit for someone who un-watched their only title.
             if getattr(profile, "history_complete", False) and profile.history:
+                # A show whose watched episodes were deleted (#173) is in `played_earlier`, not
+                # `history`, and keeps its credit: Plex still counts it as played. Un-marking each
+                # episode leaves the same counters (pms_show_counters_after_deleting_episodes.json),
+                # so that keeps the credit too, on purpose — the engine also treats the show as
+                # started. Only a series-level un-watch clears them and withdraws the credit.
+                played_earlier = {(w.tmdb_id, str(w.media_type)) for w in profile.played_earlier if w.tmdb_id}
                 gone = _withdraw_unwatched(
                     session,
                     user,
                     latest_watch,
-                    observed.get(user.plex_account_id, set()),
+                    observed.get(user.plex_account_id, set()) | played_earlier,
                     now=datetime.now(UTC),
                 )
                 if gone:

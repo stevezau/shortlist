@@ -270,6 +270,8 @@ class SeerrClient:
                     # so defaulting the unknown to "not a person" would put every real account on the
                     # server back in the dropdown and take the explanation away with them.
                     "is_plex_user": _int_or_none(row.get("userType")) != _USER_TYPE_LOCAL,
+                    # The Plex account this one signs in as; the people picker names who that is (#181).
+                    "plex_id": _int_or_none(row.get("plexId")),
                 }
             )
         return out

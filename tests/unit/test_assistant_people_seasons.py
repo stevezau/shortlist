@@ -75,6 +75,18 @@ def test_person_adapter_does_not_disclose_saved_seed_titles(people_db):
         assert not session.dirty
 
 
+def test_assistant_cannot_choose_a_persons_overseerr_account():
+    """Choosing one moves the requests of whoever the account belongs to (#181) — a person outside the
+    grant — so it stays an owner-only change on the person's page, and out of the assistant's schema."""
+    from pydantic import ValidationError
+
+    from shortlist.server.assistant.people_seasons import PeopleIntent
+
+    with pytest.raises(ValidationError):
+        PeopleIntent.model_validate({"person_id": 2, "patch": {"seerr_user_id": 5}})
+    assert "seerr_user_id" not in str(PeopleIntent.model_json_schema())
+
+
 def test_assistant_nested_unknown_fields_are_rejected():
     from pydantic import ValidationError
 

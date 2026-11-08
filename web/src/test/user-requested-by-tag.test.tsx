@@ -46,16 +46,16 @@ describe("UserRequestedByTag", () => {
   it("labels the field for the tag THEIR requests carry, and says when to use it", () => {
     renderField();
     expect(
-      screen.getByLabelText("Tag their requests already carry"),
+      screen.getByLabelText("Tag on their requests in Radarr/Sonarr"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/when their tag isn.t the row.s pattern, e\.g\. children/),
+      screen.getByText(/when you tag requests yourself, e\.g\. children/),
     ).toBeInTheDocument();
   });
 
   it("saves the tag on blur, as requested_by_tag and nothing else", async () => {
     renderField();
-    const field = screen.getByLabelText("Tag their requests already carry");
+    const field = screen.getByLabelText("Tag on their requests in Radarr/Sonarr");
     await userEvent.type(field, "children");
     await userEvent.tab();
     await waitFor(() =>
@@ -69,7 +69,7 @@ describe("UserRequestedByTag", () => {
 
   it("does not PATCH when the value is unchanged", async () => {
     renderField({ ...USER, requested_by_tag: "children" });
-    const field = screen.getByLabelText("Tag their requests already carry");
+    const field = screen.getByLabelText("Tag on their requests in Radarr/Sonarr");
     expect(field).toHaveValue("children");
     await userEvent.click(field);
     await userEvent.tab();

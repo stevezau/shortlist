@@ -1085,6 +1085,7 @@ class ContextBuilder:
             row_name_template=prefs.get("row_name_tpl"),
             request_tag=request_tag,
             requested_by_tag=(user.requested_by_tag or "").strip(),
+            seerr_user_id=user.seerr_user_id or 0,
             row_overrides=overrides.get(user.id, {}),
         )
 

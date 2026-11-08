@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Collection, User
 from shortlist.server.db.session import make_engine
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import disposing_engine, insert_legacy
 from tests.unit.test_migrations import _alembic
 
 pytestmark = pytest.mark.real_migrations
@@ -30,7 +30,7 @@ def test_0112_adds_nullable_columns_and_downgrade_removes_them(tmp_path):
     command.upgrade(cfg, "0111")
     db = tmp_path / "shortlist.db"
     with disposing_engine(make_engine(tmp_path)) as engine, Session(engine) as session:
-        session.add(User(id=1, plex_account_id=1, username="bob", slug="bob"))
+        insert_legacy(session, User, [{"id": 1, "plex_account_id": 1, "username": "bob", "slug": "bob"}])
         # A core insert: the ORM would also write the columns this migration adds.
         session.execute(insert(Collection).values(id=500, slug="s", name="S"))
         session.commit()

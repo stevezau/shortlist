@@ -67,6 +67,7 @@ class UserOut(PassthroughModel):
     cold_start: bool
     request_tag: str
     requested_by_tag: str
+    seerr_user_id: int
     # Free-form JSON, deliberately left untyped here: which keys exist varies by DATA, not by branch
     # (`history_depth` appears after the first watch sync, `paused` only once someone is paused), and
     # a model with defaults would INVENT the absent ones into every payload. `UserPrefs` in
@@ -165,6 +166,7 @@ def user_dict(
         "cold_start": user.cold_start,
         "request_tag": user.request_tag or "",
         "requested_by_tag": user.requested_by_tag or "",
+        "seerr_user_id": user.seerr_user_id or 0,
         "prefs": user.prefs or {},
         "history_depth": history_depth,
         "last_run_at": iso_utc(last_run_at),

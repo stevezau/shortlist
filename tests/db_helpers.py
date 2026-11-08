@@ -5,7 +5,8 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, MetaData, Table, create_engine
+from sqlalchemy.orm import Session
 
 _schema_template: sqlite3.Connection | None = None
 _schema_template_lock = threading.Lock()
@@ -25,6 +26,27 @@ def disposing_engine(engine: Engine) -> Iterator[Engine]:
         yield engine
     finally:
         engine.dispose()
+
+
+def insert_legacy(session: Session, model: type, rows: list[dict]) -> None:
+    """Insert rows into a table as an OLDER migration left it, for tests that upgrade to a past revision.
+
+    Neither the ORM nor a core insert on the model can do this: both write every column the model
+    gives a Python default, including columns a later migration adds, which the old table lacks. So
+    this reads the table as it stands and fills only its columns, with the model's defaults.
+
+    Args:
+        session: A session on the database at the older revision.
+        model: The ORM class whose table to insert into.
+        rows: Column values for each row; the model's defaults fill the rest.
+    """
+    table = Table(model.__tablename__, MetaData(), autoload_with=session.connection())
+    defaults = {}
+    for column in model.__table__.columns:
+        default = column.default
+        if column.name in table.c and default is not None:
+            defaults[column.name] = default.arg(None) if default.is_callable else default.arg
+    session.execute(table.insert(), [{**defaults, **row} for row in rows])
 
 
 def create_schema(engine: Engine) -> None:
