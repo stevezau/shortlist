@@ -21,6 +21,17 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 - LOW: `PATCH /api/users/{id}` writes no `events` row for any field, and this was already true before #181.
   The new release of a departed person's account is only logged. Rule 10 wants "who took which account
   from whom" answerable from Activity.
+- LOW: the Overseerr account picker (`web/src/components/user-detail/user-seerr-account.tsx`, `chosenFor` /
+  `handedTo`) counts departed people as holders, but the run ignores them (`all_profiles`). Example: a
+  departed person still holds account X; person B, auto-linked to X, is told "X is linked to <departed>
+  instead" while X's requests actually go to B. Fix: skip departed/removed holders in `others`, as
+  `claim_seerr_account` and the roster do.
+- LOW: one account's requests can split across two private rows with no warning (`requests_row.py:421-427`).
+  Example: Sarah is handed account 12 and Ben's `requested_by_tag` is `12-x`: live Overseerr requests go to
+  Sarah, tag-only ones to Ben. Both settings are the owner's, so not a silent guess. Fix: in `_add_tagged`,
+  treat a `requested_by_tag` whose number is a chosen account as ambiguous and report it.
+- LOW: the comment at `requests_row.py:422-423` says an owner-typed `12-sarah` always means that person; the
+  Request-as account check now runs first. Add "except the Request-as account (above)".
 
 **Dependency advisories (build-time only, never in the image):**
 
