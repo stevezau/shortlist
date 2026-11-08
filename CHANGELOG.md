@@ -6,6 +6,33 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-11-08
+
+### Added
+
+- **Choose a person's Overseerr account by hand** ([#181](https://github.com/stevezau/shortlist/issues/181)).
+  Shortlist links someone to Overseerr automatically when they signed in to it with their Plex account. When
+  that doesn't fit, open the person's page, go to **Settings**, and pick their account under **Overseerr
+  account**. You need this when they use a local Overseerr account, when they are a managed profile (which
+  can't sign in to Overseerr), or when you request as one account and watch on another. The account you
+  choose counts as theirs for the **Your requests** row, in place of whoever it signed in as. One account can
+  belong to one person, and the choice survives a name change. It doesn't need Overseerr's **Tag Requests**
+  option. On the **Users** page, **No account** and **Can't use Overseerr** are now one **Not linked** pill
+  that opens the person's settings. The tag field is renamed **Tag on their requests in Radarr/Sonarr**.
+  Adds migration 0115.
+
+### Fixed
+
+- **A pick someone watched keeps its credit after the show's watched episodes are deleted** (follow-up to
+  [#173](https://github.com/stevezau/shortlist/issues/173)). Since 1.14.0, the nightly watch sync could treat
+  such a show as unwatched and drop a recent "watched a pick" credit. Marking the whole series unwatched in
+  Plex still removes the credit.
+- **A tag that names your Request as account no longer gives one person the titles Shortlist requested.**
+  If someone's **Tag on their requests** matched the account Shortlist requests as, they were credited with
+  every title Shortlist asked for.
+- **Overseerr tags for names with no Latin letters are now read.** Overseerr tags a request from such a user
+  as just their number (for example `12-`), and Shortlist skipped those tags.
+
 ## [1.14.0] - 2026-11-01
 
 ### Added
