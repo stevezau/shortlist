@@ -163,7 +163,10 @@ describe("DownloadButton", () => {
     // — and a callback touching `URL` after its environment is gone is an uncaught ReferenceError,
     // not a no-op. In CI it killed the suite process AFTER all 1283 tests passed: "window is not
     // defined", from processTimers, once in three runs.
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Only the timeout pair is faked, so the count is the component's timers and nothing else.
+    // jsdom 31 arms its own 16ms rendering-update interval (Window.scheduleRenderingUpdate, via its
+    // focus fixup when the clicked button re-renders), which a fully faked clock counted here too.
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout"] });
     try {
       captureAnchorClicks();
       vi.stubGlobal("fetch", vi.fn(async () => zip()));
