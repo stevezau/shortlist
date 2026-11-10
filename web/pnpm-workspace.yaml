@@ -38,3 +38,9 @@ overrides:
   source-map-js@>=1.0.0 <1.2.2: 1.2.2
   # GHSA-rj75-hqrm-r3gf: quadratic selector parsing. Reached only via tailwindcss 3 (build time).
   postcss-selector-parser@<7.1.6: 7.1.6
+  # GHSA-g3hv-75wg-m249: minimatch globParts amplification (DoS) when optimizationLevel >= 2. Reached
+  # only via eslint and @typescript-eslint (lint time, never the runtime image). No 10.x fix exists, so
+  # this forces the 11 line: 11.0 removed makeRe/regexp/AST/matchOne/debug, none of which eslint
+  # 10, @eslint/config-array or typescript-estree call (they use Minimatch, .match and .set only).
+  # @redocly/openapi-core's minimatch 5 is outside the advisory range and stays as it is.
+  minimatch@>=7.0.0 <11.0.1: 11.0.5
