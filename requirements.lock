@@ -25,7 +25,7 @@ attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
-authlib==1.9.1
+authlib==1.9.5
     # via shortlist (pyproject.toml)
 certifi==2026.7.22
     # via
