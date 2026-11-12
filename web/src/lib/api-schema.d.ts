@@ -931,9 +931,11 @@ export interface paths {
         put?: never;
         /**
          * Hold Preview
-         * @description Which movies waiting in the inbox these genres/tags would hold — the settings page's live check.
+         * @description Which titles waiting in the inbox these picks would hold — the settings page's live check.
          *
-         *     Reads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.
+         *     Judged as a run judges them (`request_holds`): the same genre/tag match, then the same exceptions,
+         *     with the rating the inbox recorded for each title. Reads TMDB through the shared cache, so a title a
+         *     run already looked at costs nothing. Nothing is saved.
          */
         post: operations["hold_preview_api_requests_hold_preview_post"];
         delete?: never;
@@ -1060,6 +1062,26 @@ export interface paths {
          *     since the Arr clients are sync. A title neither app tracks appears as None.
          */
         get: operations["get_arr_status_api_requests_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/requests/tmdb-companies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tmdb Companies
+         * @description TMDB production companies whose name matches ``q``, for the holds' "From a studio" exception.
+         */
+        get: operations["tmdb_companies_api_requests_tmdb_companies_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1402,7 +1424,10 @@ export interface paths {
         };
         /**
          * Tmdb Tags
-         * @description TMDB tags whose name matches ``q``, each with how many films TMDB tags with it.
+         * @description TMDB tags whose name matches ``q``, each with how many films (or, for ``media=show``, shows) carry it.
+         *
+         *     Tags are one id space for both, so only the count differs: a tag's film count says little about how
+         *     many shows it would hold.
          */
         get: operations["tmdb_tags_api_seasons_tmdb_tags_get"];
         put?: never;
@@ -4425,6 +4450,17 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** CompanyOut */
+        CompanyOut: {
+            /** Country */
+            country: string;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * ConfiguredDestination
          * @description A credential-free, currently configured service endpoint.
@@ -4850,6 +4886,21 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ExceptedTitleOut */
+        ExceptedTitleOut: {
+            /** Exception */
+            exception: string;
+            /** Reason */
+            reason: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * GrantConstraintsOut
          * @description Publicly effective resource and work bounds.
@@ -5081,11 +5132,21 @@ export interface components {
         };
         /**
          * HoldPreviewIn
-         * @description Genres and tags the owner is considering, before they are saved.
+         * @description One media type's genres, tags and exceptions the owner is considering, before they are saved.
          */
         HoldPreviewIn: {
+            /** Except Companies */
+            except_companies?: number[];
+            /** Except Min Rating */
+            except_min_rating?: number | null;
             /** Genres */
             genres?: number[];
+            /**
+             * Media Type
+             * @default movie
+             * @enum {string}
+             */
+            media_type: "movie" | "show";
             /** Tags */
             tags?: number[];
         };
@@ -5093,6 +5154,8 @@ export interface components {
         HoldPreviewOut: {
             /** Checked */
             checked: number;
+            /** Excepted */
+            excepted?: components["schemas"]["ExceptedTitleOut"][];
             /** Held */
             held: components["schemas"]["HeldTitleOut"][];
             /** Unread */
@@ -7589,9 +7652,11 @@ export interface components {
             /** Id */
             id: number;
             /** Movies */
-            movies: number;
+            movies?: number | null;
             /** Name */
             name: string;
+            /** Shows */
+            shows?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -10093,6 +10158,37 @@ export interface operations {
             };
         };
     };
+    tmdb_companies_api_requests_tmdb_companies_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_runs_api_runs_get: {
         parameters: {
             query?: {
@@ -10584,6 +10680,7 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
+                media?: "movie" | "show";
             };
             header?: never;
             path?: never;
