@@ -755,7 +755,7 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
     ),
     _setting(
         "requests.hold_genres",
-        "Genres never requested automatically",
+        "Movie genres never requested automatically",
         "TMDB movie genre ids. A movie in any of them waits in the request inbox instead of being sent "
         "automatically; the owner can still send it from there.",
         SettingGroup.REQUESTS,
@@ -766,10 +766,79 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
     ),
     _setting(
         "requests.hold_tags",
-        "TMDB tags never requested automatically",
+        "TMDB tags whose movies are never requested automatically",
         'TMDB tag (keyword) ids mapped to their names, e.g. {"156205": "concert film"}. A movie carrying any '
         "of them waits in the request inbox instead of being sent automatically.",
         SettingGroup.REQUESTS,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.hold_except_companies",
+        "Studios whose held movies still send automatically",
+        'TMDB company ids mapped to their names, e.g. {"41077": "A24"}. A movie the hold genres or tags match '
+        "is still sent automatically when one of these is among its TMDB production companies.",
+        SettingGroup.REQUESTS,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.hold_except_min_rating",
+        "Rating that sends a held movie anyway",
+        "A movie the hold genres or tags match is still sent automatically when rated at least this on the "
+        "request rating source; null turns the exception off.",
+        SettingGroup.REQUESTS,
+        value_type=ValueType.NUMBER,
+        range=NumericRange(minimum=0, maximum=10, unit="rating"),
+        nullable=True,
+        reset_behavior=ResetBehavior.LITERAL_NULL,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.hold_show_genres",
+        "Show genres never requested automatically",
+        "TMDB TV genre ids (TMDB's TV list, not the movie one). A show in any of them waits in the request "
+        "inbox instead of being sent automatically; the owner can still send it from there.",
+        SettingGroup.REQUESTS,
+        value_type=ValueType.INTEGER_LIST,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.hold_show_tags",
+        "TMDB tags whose shows are never requested automatically",
+        'TMDB tag (keyword) ids mapped to their names, e.g. {"210024": "anime"}. A show carrying any of them '
+        "waits in the request inbox instead of being sent automatically.",
+        SettingGroup.REQUESTS,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.hold_show_except_companies",
+        "Studios whose held shows still send automatically",
+        "TMDB company ids mapped to their names. A show the hold genres or tags match is still sent "
+        "automatically when one of these is among its TMDB production companies (not its network).",
+        SettingGroup.REQUESTS,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.hold_show_except_min_rating",
+        "Rating that sends a held show anyway",
+        "A show the hold genres or tags match is still sent automatically when rated at least this on the "
+        "request rating source; null turns the exception off.",
+        SettingGroup.REQUESTS,
+        value_type=ValueType.NUMBER,
+        range=NumericRange(minimum=0, maximum=10, unit="rating"),
+        nullable=True,
+        reset_behavior=ResetBehavior.LITERAL_NULL,
         prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
         effects=(LOCAL, FUTURE_REQUEST),
         capabilities=(Capability.REQUESTS_SEND,),

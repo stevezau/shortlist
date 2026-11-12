@@ -35,6 +35,7 @@ from shortlist.engine.history import ShareTokenWatchSource, distinct_recent, rat
 from shortlist.engine.models import (
     ArrTarget,
     EngineConfig,
+    HoldFilter,
     HubAnchor,
     MediaType,
     OverTime,
@@ -236,6 +237,20 @@ def _optional_float(raw: object) -> float | None:
         return float(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _hold_filter(store: SettingsStore, prefix: str) -> HoldFilter:
+    """One media type's hold picks: ``<prefix>genres``, ``tags``, ``except_companies``, ``except_min_rating``.
+
+    The movie keys have no media word in them (``requests.hold_genres``) because they predate the show
+    ones, so an upgrade reads the owner's existing picks as the movie picks they always were.
+    """
+    return HoldFilter(
+        genres=frozenset(int(g) for g in store.get(f"{prefix}genres") or []),
+        tags=frozenset(int(t) for t in store.get(f"{prefix}tags") or {}),
+        except_companies=frozenset(int(c) for c in store.get(f"{prefix}except_companies") or {}),
+        except_min_rating=_optional_float(store.get(f"{prefix}except_min_rating")),
+    )
 
 
 def row_request_overrides(collection: Collection) -> RequestOverrides | None:
@@ -1640,8 +1655,8 @@ class ContextBuilder:
             auto_user_tag=bool(store.get("requests.auto_user_tag")),
             sonarr_monitor=store.get("requests.sonarr.monitor") or "all",
             season_count=int(store.get("requests.season_count") or 1),
-            hold_genres=frozenset(int(g) for g in store.get("requests.hold_genres") or []),
-            hold_tags=frozenset(int(t) for t in store.get("requests.hold_tags") or {}),
+            hold_movies=_hold_filter(store, "requests.hold_"),
+            hold_shows=_hold_filter(store, "requests.hold_show_"),
             language_mode=store.get("requests.language_mode") or "any",
             preferred_languages=normalise_languages(store.get("requests.preferred_languages")),
             # Read WITHOUT `or`: None means "follow min_rating + the gap" and 0.0 is a real bar, so
