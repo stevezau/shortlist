@@ -40,6 +40,8 @@ _LIST_FIELDS = (
 #: What `list_item` keeps of a detail payload: a list item's fields (``genre_ids`` is built from ``genres``),
 #: plus the synopsis, which a detail read carries anyway.
 _ITEM_FIELDS = (*(field for field in _LIST_FIELDS if field != "genre_ids"), "overview")
+#: Companies one studio search returns, from TMDB's first two pages (20 a page) re-ranked.
+COMPANY_SEARCH_LIMIT = 20
 #: Tags whose film counts `search_keywords` reads at once.
 _KEYWORD_COUNT_WORKERS = 6
 
@@ -267,24 +269,36 @@ class TmdbClient:
             counts = list(pool.map(lambda context, tag: context.run(titles, tag), contexts, tags))
         return [{"id": tag["id"], "name": tag["name"], counted: n} for tag, n in zip(tags, counts, strict=True)]
 
-    def search_companies(self, query: str, limit: int = 10) -> list[dict]:
+    def search_companies(self, query: str, limit: int = COMPANY_SEARCH_LIMIT) -> list[dict]:
         """TMDB production companies whose name matches ``query`` — the request holds' studio exceptions.
 
-        TMDB has many companies of one name (a Warner Bros. per country and decade), so each carries its
-        country for the owner to tell them apart. TMDB has no search for TV networks at all.
+        TMDB's own order buries the studios an owner means: "disney" leads with Disney Türkiye and Disney
+        Research, and DreamWorks Animation is ninth for "dreamworks". So two pages are read and re-ranked
+        (:func:`rank_companies`). Each company carries its country and logo, because TMDB has many of one
+        name (a Warner Bros. per country and decade) and a logo is how the real studio stands out. TMDB has
+        no search for TV networks at all.
 
         Returns:
-            ``{"id", "name", "country"}`` per company, in TMDB's order, at most ``limit`` of them.
+            ``{"id", "name", "country", "logo_path"}`` per company, best first, at most ``limit`` of them.
+            ``logo_path`` is TMDB's ("/abc.png"), or "" when it has none.
         """
         query = query.strip()
         if not query:
             return []
-        found = self._get("/search/company", params={"query": query}).get("results") or []
-        return [
-            {"id": c["id"], "name": str(c.get("name") or c["id"]), "country": str(c.get("origin_country") or "")}
-            for c in found
-            if isinstance(c, dict) and isinstance(c.get("id"), int)
-        ][:limit]
+        first = self._get("/search/company", params={"query": query})
+        found = list(first.get("results") or [])
+        if int(first.get("total_pages") or 1) > 1:
+            found += self._get("/search/company", params={"query": query, "page": 2}).get("results") or []
+        companies: dict[int, dict] = {}
+        for c in found:
+            if isinstance(c, dict) and isinstance(c.get("id"), int) and c["id"] not in companies:
+                companies[c["id"]] = {
+                    "id": c["id"],
+                    "name": str(c.get("name") or c["id"]),
+                    "country": str(c.get("origin_country") or ""),
+                    "logo_path": str(c.get("logo_path") or ""),
+                }
+        return rank_companies(list(companies.values()), query)[:limit]
 
     def genre_ids_for(self, tmdb_id: int, media_type: MediaType) -> list[int]:
         """A title's own genre ids — used to derive a person's dominant genres for discover."""
@@ -446,6 +460,26 @@ class TmdbClient:
         """
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         return (self._get(f"/{kind}/{tmdb_id}") or {}).get("overview") or ""
+
+
+def rank_companies(companies: list[dict], query: str) -> list[dict]:
+    """``companies`` best first for ``query``: an exact name, then names starting with it, then ones with a
+    logo, then the rest — each group in TMDB's order.
+
+    A logo is the cheapest sign of a company someone curates on TMDB: the studios people mean have one,
+    and the near-empty entries (a regional office, an archive) mostly don't.
+    """
+    needle = query.strip().casefold()
+
+    def group(company: dict) -> int:
+        name = company["name"].casefold()
+        if name == needle:
+            return 0
+        if name.startswith(needle):
+            return 1
+        return 2 if company.get("logo_path") else 3
+
+    return sorted(companies, key=group)
 
 
 def _keyword_map(keywords: object) -> dict[int, str]:

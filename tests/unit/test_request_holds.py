@@ -10,7 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.clients.tmdb import TmdbClient
+from shortlist.engine.clients.tmdb import TmdbClient, rank_companies
 from shortlist.engine.models import HoldFilter, MediaType, MissingTitle, RequestOverrides
 from shortlist.engine.request_config import resolve_request_config
 from shortlist.engine.request_holds import HOLD_REASON_PREFIX, hold_reason, is_story_film
@@ -250,19 +250,31 @@ class TestKeywordClient:
             client.show_keywords(100)
 
 
+def _company(cid: int, name: str, logo: bool = False, country: str = "US") -> dict:
+    """One `/search/company` result, as TMDB returns it."""
+    return {"id": cid, "name": name, "logo_path": f"/{cid}.png" if logo else None, "origin_country": country}
+
+
+def _pages(*pages: list[dict]):
+    """A `_get` answering `/search/company` page by page, with TMDB's `total_pages`."""
+
+    def get(path: str, params: dict) -> dict:
+        assert path == "/search/company"
+        page = params.get("page", 1)
+        return {"page": page, "results": pages[page - 1], "total_pages": len(pages)}
+
+    return Mock(side_effect=get)
+
+
 class TestCompanySearch:
-    def test_returns_each_company_with_its_country(self, monkeypatch):
+    def test_returns_each_company_with_its_country_and_logo(self, monkeypatch):
         client = TmdbClient.__new__(TmdbClient)
-        results = [
-            {"id": A24, "name": "A24", "logo_path": "/a.png", "origin_country": "US"},
-            {"id": 7, "name": "A24 Films", "logo_path": None, "origin_country": ""},
-            {"name": "no id"},
-        ]
-        get = Mock(return_value={"page": 1, "results": results})
+        results = [_company(A24, "A24", logo=True), _company(7, "A24 Films", country=""), {"name": "no id"}]
+        get = _pages(results)
         monkeypatch.setattr(client, "_get", get)
         assert client.search_companies(" a24 ") == [
-            {"id": A24, "name": "A24", "country": "US"},
-            {"id": 7, "name": "A24 Films", "country": ""},
+            {"id": A24, "name": "A24", "country": "US", "logo_path": f"/{A24}.png"},
+            {"id": 7, "name": "A24 Films", "country": "", "logo_path": ""},
         ]
         get.assert_called_once_with("/search/company", params={"query": "a24"})
 
@@ -272,6 +284,59 @@ class TestCompanySearch:
         monkeypatch.setattr(client, "_get", get)
         assert client.search_companies("  ") == []
         get.assert_not_called()
+
+    def test_reads_a_second_page_and_finds_the_studio_tmdb_left_off_the_first(self, monkeypatch):
+        """Shaped like TMDB's answer for "disney" (2026-11-12): ten Disney offices and channels lead, and
+        neither Walt Disney Animation Studios (6125) nor Walt Disney Pictures (2) is in the first ten."""
+        offices = ["Türkiye", "Interactive", "Destinations", "Research", "Junior", "Channel", "XD", "Theatrical"]
+        first = [_company(900 + i, f"Disney {n}", logo=n in ("Junior", "Channel")) for i, n in enumerate(offices)]
+        first += [_company(950, "The Disney Archives"), _company(951, "Ub Iwerks and Disney")]
+        second = [
+            _company(952, "Euro Disney"),
+            _company(6125, "Walt Disney Animation Studios", logo=True),
+            _company(2, "Walt Disney Pictures", logo=True),
+            _company(900, "Disney Türkiye"),  # TMDB repeats an entry across pages now and then
+        ]
+        client = TmdbClient.__new__(TmdbClient)
+        get = _pages(first, second)
+        monkeypatch.setattr(client, "_get", get)
+
+        found = [c["name"] for c in client.search_companies("disney")]
+
+        assert found == [
+            *(f"Disney {n}" for n in offices),  # names starting with the query, in TMDB's order
+            "Walt Disney Animation Studios",  # then anything with a logo
+            "Walt Disney Pictures",
+            "The Disney Archives",  # then the rest
+            "Ub Iwerks and Disney",
+            "Euro Disney",
+        ]
+        assert get.call_args_list[1].kwargs == {"params": {"query": "disney", "page": 2}}
+
+    def test_an_exact_name_leads_then_names_starting_with_the_query(self):
+        """Shaped like "dreamworks", where TMDB had DreamWorks Animation (521) ninth."""
+        companies = [
+            {"id": 1, "name": "Amblin DreamWorks", "logo_path": "/1.png"},
+            {"id": 2, "name": "DreamWorks Television", "logo_path": ""},
+            {"id": 3, "name": "Pacific Data Images (DreamWorks)", "logo_path": ""},
+            {"id": 7, "name": "dreamworks", "logo_path": ""},
+            {"id": 521, "name": "DreamWorks Animation", "logo_path": "/521.png"},
+        ]
+        assert [c["id"] for c in rank_companies(companies, "DreamWorks")] == [7, 2, 521, 1, 3]
+
+    def test_walt_disney_finds_the_studios_past_the_archives(self):
+        """Shaped like "walt disney": Walt Disney Studio (171657), Walt Disney Atrractions and the archives
+        lead TMDB's list; the two studios an owner means sit behind them."""
+        companies = [
+            {"id": 171657, "name": "Walt Disney Studio", "logo_path": ""},
+            {"id": 11, "name": "The Walt Disney Company", "logo_path": "/11.png"},
+            {"id": 12, "name": "Walt Disney Atrractions", "logo_path": ""},
+            {"id": 13, "name": "Archives of Walt Disney", "logo_path": ""},
+            {"id": 6125, "name": "Walt Disney Animation Studios", "logo_path": "/6125.png"},
+            {"id": 2, "name": "Walt Disney Pictures", "logo_path": "/2.png"},
+        ]
+        ranked = [c["id"] for c in rank_companies(companies, "walt disney")]
+        assert ranked == [171657, 12, 6125, 2, 11, 13]
 
 
 def _run_tmdb(held_ids: set[int]) -> FakeTmdb:

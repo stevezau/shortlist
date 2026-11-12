@@ -485,12 +485,22 @@ class HoldPreviewIn(BaseModel):
     except_min_rating: float | None = Field(default=None, ge=0.0, le=10.0)
 
 
+class CompanyRefOut(PassthroughModel):
+    id: int
+    name: str
+
+
 class HeldTitleOut(PassthroughModel):
     tmdb_id: int
     title: str
     year: int | None
     reason: str  # "genre Music" | "tag “concert film”"
     story: bool  # a story film the picks catch — a sign a pick is broader than meant (always false for a show)
+    # The title's TMDB production companies, so the settings page can offer "let this studio through" from
+    # the title the owner is looking at. TMDB's company search ranks the studios people mean too low to
+    # find (Walt Disney Animation Studios is not in the first ten for "disney"), and the id read off the
+    # title itself is the one the run will match.
+    companies: list[CompanyRefOut] = Field(default_factory=list)
 
 
 class ExceptedTitleOut(PassthroughModel):
@@ -544,17 +554,20 @@ async def hold_preview(body: HoldPreviewIn, request: Request) -> dict:
     if tmdb is None:
         raise HTTPException(status_code=503, detail="Add a TMDB API key in Settings first.")
 
-    def judge(row) -> tuple[str, bool, str] | None:
-        """``(reason, story, exception)`` — ``("", False, "")`` for an allowed title, None if TMDB can't say.
+    def judge(row) -> tuple[str, bool, str, list[dict]] | None:
+        """``(reason, story, exception, companies)`` — ``("", False, "", [])`` for an allowed title, None if
+        TMDB can't say.
 
-        A failed exception read leaves the title held, as a run would hold it.
+        A failed exception read leaves the title held, as a run would hold it. The story flag and the
+        companies come from the one cached detail payload the genre and studio checks read.
         """
         try:
             reason = match_hold(tmdb, row.tmdb_id, media_type, genres=holds.genres, tags=holds.tags)
             if not reason:
-                return "", False, ""
+                return "", False, "", []
+            details = tmdb.details(row.tmdb_id, media_type)
             story = media_type is MediaType.MOVIE and is_story_film(
-                g["id"] for g in tmdb.details(row.tmdb_id, media_type).get("genres") or [] if "id" in g
+                g["id"] for g in details.get("genres") or [] if "id" in g
             )
         except Exception as e:
             logger.debug("hold preview: TMDB read for {} failed ({})", row.tmdb_id, type(e).__name__)
@@ -564,9 +577,14 @@ async def hold_preview(body: HoldPreviewIn, request: Request) -> dict:
         except Exception as e:
             logger.debug("hold preview: TMDB studio read for {} failed ({})", row.tmdb_id, type(e).__name__)
             exception = ""
-        return reason, story, exception
+        companies = [
+            {"id": c["id"], "name": str(c.get("name") or c["id"])}
+            for c in details.get("production_companies") or []
+            if isinstance(c, dict) and isinstance(c.get("id"), int)
+        ]
+        return reason, story, exception, companies
 
-    def judge_all() -> list[tuple[str, bool, str] | None]:
+    def judge_all() -> list[tuple[str, bool, str, list[dict]] | None]:
         with ThreadPoolExecutor(max_workers=_HOLD_PREVIEW_WORKERS, thread_name_prefix="hold-preview") as pool:
             return list(pool.map(lambda row: contextvars.copy_context().run(judge, row), rows))
 
@@ -579,7 +597,7 @@ async def hold_preview(body: HoldPreviewIn, request: Request) -> dict:
         if v[2]:
             excepted.append({**title, "exception": v[2]})
         else:
-            held.append({**title, "story": v[1]})
+            held.append({**title, "story": v[1], "companies": v[3]})
     return {"checked": len(rows), "held": held, "unread": sum(v is None for v in verdicts), "excepted": excepted}
 
 
@@ -587,11 +605,16 @@ class CompanyOut(PassthroughModel):
     id: int
     name: str
     country: str  # ISO 3166-1 code, "" when TMDB has none — how two companies of one name are told apart
+    logo_path: str = ""  # TMDB's logo path ("/abc.png"), "" when it has none; the real studios mostly do
 
 
 @router.get("/tmdb-companies", response_model=list[CompanyOut])
 async def tmdb_companies(request: Request, q: str = "") -> list[dict]:
-    """TMDB production companies whose name matches ``q``, for the holds' "From a studio" exception."""
+    """TMDB production companies whose name matches ``q``, best first, for the holds' "From a studio" exception.
+
+    Re-ranked from TMDB's first two pages (`TmdbClient.search_companies`): its own order buries the studios
+    an owner means under regional offices and archives of the same name.
+    """
     query = q.strip()
     if len(query) < _MIN_SEARCH:
         return []

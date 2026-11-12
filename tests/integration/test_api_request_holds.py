@@ -166,7 +166,14 @@ class TestHoldPreview:
         assert result["checked"] == 4
         assert result["unread"] == 0
         assert result["held"] == [
-            {"tmdb_id": 1, "title": _TITLES[1], "year": None, "reason": "tag “concert film”", "story": False}
+            {
+                "tmdb_id": 1,
+                "title": _TITLES[1],
+                "year": None,
+                "reason": "tag “concert film”",
+                "story": False,
+                "companies": [],
+            }
         ]
 
     def test_a_broad_tag_flags_the_story_film_it_catches(self, inbox: TestClient, monkeypatch):
@@ -233,14 +240,29 @@ class TestHoldPreview:
         response = inbox.post("/api/requests/hold-preview", json={"media_type": "episode", "genres": [DOCUMENTARY]})
         assert response.status_code == 422
 
+    def test_a_held_title_lists_its_own_studios_to_let_through(self, inbox: TestClient, monkeypatch):
+        """TMDB has several companies of one name, so the settings page offers the ones on the title itself."""
+        result = _preview(inbox, monkeypatch, media_type="show", tags=[ANIME])
+        companies = {h["tmdb_id"]: h["companies"] for h in result["held"]}
+        assert companies == {5: [], 6: [{"id": NETFLIX_STUDIO, "name": "Netflix Studios"}]}
+
+    def test_letting_a_listed_studio_through_moves_the_title_to_sent_anyway(self, inbox: TestClient, monkeypatch):
+        result = _preview(inbox, monkeypatch, media_type="show", tags=[ANIME], except_companies=[NETFLIX_STUDIO])
+        assert [h["tmdb_id"] for h in result["held"]] == [5]
+        assert [(e["tmdb_id"], e["exception"]) for e in result["excepted"]] == [(6, "studio Netflix Studios")]
+
 
 class TestCompanySearch:
-    def test_companies_are_tmdbs_answer(self, client: TestClient, monkeypatch):
+    def test_companies_are_tmdbs_answer_with_their_logo(self, client: TestClient, monkeypatch):
         tmdb = Mock()
-        tmdb.search_companies.return_value = [{"id": A24, "name": "A24", "country": "US"}]
+        tmdb.search_companies.return_value = [
+            {"id": A24, "name": "A24", "country": "US", "logo_path": "/a24.png"},
+            {"id": 7, "name": "A24 Films", "country": "", "logo_path": ""},
+        ]
         monkeypatch.setattr(client.app.state.run_service, "build_tmdb_only", lambda: tmdb)
         assert client.get("/api/requests/tmdb-companies?q=%20a24%20").json() == [
-            {"id": A24, "name": "A24", "country": "US"}
+            {"id": A24, "name": "A24", "country": "US", "logo_path": "/a24.png"},
+            {"id": 7, "name": "A24 Films", "country": "", "logo_path": ""},
         ]
         tmdb.search_companies.assert_called_once_with("a24")
 

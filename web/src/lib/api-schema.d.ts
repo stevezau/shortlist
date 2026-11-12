@@ -1079,7 +1079,10 @@ export interface paths {
         };
         /**
          * Tmdb Companies
-         * @description TMDB production companies whose name matches ``q``, for the holds' "From a studio" exception.
+         * @description TMDB production companies whose name matches ``q``, best first, for the holds' "From a studio" exception.
+         *
+         *     Re-ranked from TMDB's first two pages (`TmdbClient.search_companies`): its own order buries the studios
+         *     an owner means under regional offices and archives of the same name.
          */
         get: operations["tmdb_companies_api_requests_tmdb_companies_get"];
         put?: never;
@@ -4456,6 +4459,20 @@ export interface components {
             country: string;
             /** Id */
             id: number;
+            /**
+             * Logo Path
+             * @default
+             */
+            logo_path: string;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** CompanyRefOut */
+        CompanyRefOut: {
+            /** Id */
+            id: number;
             /** Name */
             name: string;
         } & {
@@ -5083,6 +5100,8 @@ export interface components {
         };
         /** HeldTitleOut */
         HeldTitleOut: {
+            /** Companies */
+            companies?: components["schemas"]["CompanyRefOut"][];
             /** Reason */
             reason: string;
             /** Story */

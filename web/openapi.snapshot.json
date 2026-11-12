@@ -2421,6 +2421,11 @@
             "title": "Id",
             "type": "integer"
           },
+          "logo_path": {
+            "default": "",
+            "title": "Logo Path",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2432,6 +2437,25 @@
           "country"
         ],
         "title": "CompanyOut",
+        "type": "object"
+      },
+      "CompanyRefOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "CompanyRefOut",
         "type": "object"
       },
       "ConfiguredDestination": {
@@ -4024,6 +4048,13 @@
       "HeldTitleOut": {
         "additionalProperties": true,
         "properties": {
+          "companies": {
+            "items": {
+              "$ref": "#/components/schemas/CompanyRefOut"
+            },
+            "title": "Companies",
+            "type": "array"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -14846,7 +14877,7 @@
     },
     "/api/requests/tmdb-companies": {
       "get": {
-        "description": "TMDB production companies whose name matches ``q``, for the holds' \"From a studio\" exception.",
+        "description": "TMDB production companies whose name matches ``q``, best first, for the holds' \"From a studio\" exception.\n\nRe-ranked from TMDB's first two pages (`TmdbClient.search_companies`): its own order buries the studios\nan owner means under regional offices and archives of the same name.",
         "operationId": "tmdb_companies_api_requests_tmdb_companies_get",
         "parameters": [
           {
