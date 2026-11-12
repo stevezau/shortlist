@@ -2410,6 +2410,54 @@
         "title": "CollectionOut",
         "type": "object"
       },
+      "CompanyOut": {
+        "additionalProperties": true,
+        "properties": {
+          "country": {
+            "title": "Country",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "logo_path": {
+            "default": "",
+            "title": "Logo Path",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "country"
+        ],
+        "title": "CompanyOut",
+        "type": "object"
+      },
+      "CompanyRefOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "CompanyRefOut",
+        "type": "object"
+      },
       "ConfiguredDestination": {
         "additionalProperties": true,
         "description": "A credential-free, currently configured service endpoint.",
@@ -3422,6 +3470,47 @@
         "title": "EventOut",
         "type": "object"
       },
+      "ExceptedTitleOut": {
+        "additionalProperties": true,
+        "properties": {
+          "exception": {
+            "title": "Exception",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "title",
+          "year",
+          "reason",
+          "exception"
+        ],
+        "title": "ExceptedTitleOut",
+        "type": "object"
+      },
       "GrantConstraintsOut": {
         "additionalProperties": true,
         "description": "Publicly effective resource and work bounds.",
@@ -3959,6 +4048,13 @@
       "HeldTitleOut": {
         "additionalProperties": true,
         "properties": {
+          "companies": {
+            "items": {
+              "$ref": "#/components/schemas/CompanyRefOut"
+            },
+            "title": "Companies",
+            "type": "array"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -4086,8 +4182,29 @@
         "type": "object"
       },
       "HoldPreviewIn": {
-        "description": "Genres and tags the owner is considering, before they are saved.",
+        "description": "One media type's genres, tags and exceptions the owner is considering, before they are saved.",
         "properties": {
+          "except_companies": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 60,
+            "title": "Except Companies",
+            "type": "array"
+          },
+          "except_min_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Except Min Rating"
+          },
           "genres": {
             "items": {
               "type": "integer"
@@ -4095,6 +4212,15 @@
             "maxItems": 30,
             "title": "Genres",
             "type": "array"
+          },
+          "media_type": {
+            "default": "movie",
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media Type",
+            "type": "string"
           },
           "tags": {
             "items": {
@@ -4114,6 +4240,13 @@
           "checked": {
             "title": "Checked",
             "type": "integer"
+          },
+          "excepted": {
+            "items": {
+              "$ref": "#/components/schemas/ExceptedTitleOut"
+            },
+            "title": "Excepted",
+            "type": "array"
           },
           "held": {
             "items": {
@@ -10045,18 +10178,35 @@
             "type": "integer"
           },
           "movies": {
-            "title": "Movies",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Movies"
           },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "shows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shows"
           }
         },
         "required": [
           "id",
-          "name",
-          "movies"
+          "name"
         ],
         "title": "TagOut",
         "type": "object"
@@ -14472,7 +14622,7 @@
     },
     "/api/requests/hold-preview": {
       "post": {
-        "description": "Which movies waiting in the inbox these genres/tags would hold \u2014 the settings page's live check.\n\nReads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.",
+        "description": "Which titles waiting in the inbox these picks would hold \u2014 the settings page's live check.\n\nJudged as a run judges them (`request_holds`): the same genre/tag match, then the same exceptions,\nwith the rating the inbox recorded for each title. Reads TMDB through the shared cache, so a title a\nrun already looked at costs nothing. Nothing is saved.",
         "operationId": "hold_preview_api_requests_hold_preview_post",
         "requestBody": {
           "content": {
@@ -14720,6 +14870,54 @@
           }
         },
         "summary": "Get Arr Status",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/tmdb-companies": {
+      "get": {
+        "description": "TMDB production companies whose name matches ``q``, best first, for the holds' \"From a studio\" exception.\n\nRe-ranked from TMDB's first two pages (`TmdbClient.search_companies`): its own order buries the studios\nan owner means under regional offices and archives of the same name.",
+        "operationId": "tmdb_companies_api_requests_tmdb_companies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CompanyOut"
+                  },
+                  "title": "Response Tmdb Companies Api Requests Tmdb Companies Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tmdb Companies",
         "tags": [
           "requests"
         ]
@@ -15446,7 +15644,7 @@
     },
     "/api/seasons/tmdb-tags": {
       "get": {
-        "description": "TMDB tags whose name matches ``q``, each with how many films TMDB tags with it.",
+        "description": "TMDB tags whose name matches ``q``, each with how many films (or, for ``media=show``, shows) carry it.\n\nTags are one id space for both, so only the count differs: a tag's film count says little about how\nmany shows it would hold.",
         "operationId": "tmdb_tags_api_seasons_tmdb_tags_get",
         "parameters": [
           {
@@ -15456,6 +15654,20 @@
             "schema": {
               "default": "",
               "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "media",
+            "required": false,
+            "schema": {
+              "default": "movie",
+              "enum": [
+                "movie",
+                "show"
+              ],
+              "title": "Media",
               "type": "string"
             }
           }

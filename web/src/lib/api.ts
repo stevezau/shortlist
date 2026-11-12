@@ -42,6 +42,7 @@ import type {
   SeasonPreviewInput,
   HoldPreview,
   HoldPreviewInput,
+  TmdbCompany,
   TmdbTag,
   Theme,
   ThemeCapabilities,
@@ -722,14 +723,18 @@ export const api = {
   getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>
     request("/api/seasons/next-date", { method: "POST", body: JSON.stringify(rule) }),
 
-  /** Which movies waiting in the inbox these genres/tags would hold. Saves nothing; the first call can
-   *  take a few seconds while TMDB is read. */
+  /** Which movies (or shows) waiting in the inbox these genres/tags would hold, and which a draft
+   *  exception sends anyway. Saves nothing; the first call can take a few seconds while TMDB is read. */
   previewHolds: (body: HoldPreviewInput): Promise<HoldPreview> =>
     request("/api/requests/hold-preview", { method: "POST", body: JSON.stringify(body) }),
 
-  /** TMDB tags whose name matches, each with how many films TMDB gives it. */
-  getTmdbTags: (q: string): Promise<TmdbTag[]> =>
-    request(`/api/seasons/tmdb-tags?q=${encodeURIComponent(q)}`),
+  /** TMDB tags whose name matches, each with how many films TMDB gives it (shows, for `media` "show"). */
+  getTmdbTags: (q: string, media: "movie" | "show" = "movie"): Promise<TmdbTag[]> =>
+    request(`/api/seasons/tmdb-tags?q=${encodeURIComponent(q)}${media === "show" ? "&media=show" : ""}`),
+
+  /** TMDB production companies whose name matches, for the request holds' "From a studio" exception. */
+  getTmdbCompanies: (q: string): Promise<TmdbCompany[]> =>
+    request(`/api/requests/tmdb-companies?q=${encodeURIComponent(q)}`),
 
   /** The libraries' collections whose title contains `q` (never one of Shortlist's own rows). */
   getPlexCollections: (q: string): Promise<PlexCollectionMatch[]> =>

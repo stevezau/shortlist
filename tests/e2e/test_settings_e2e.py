@@ -225,10 +225,12 @@ def test_held_tags_preview_the_inbox_and_survive_a_reload(page: Page, app: Short
 
     _open_settings(page, "requests")
     expect(page.get_by_text("Nothing picked, so any movie can be requested automatically")).to_be_visible(timeout=LOAD)
-    page.get_by_label("Search TMDB tags").fill("thanks")
-    page.get_by_role("button", name="Add tag thanksgiving", exact=True).click()
+    # The Shows panel has a tag search of its own; these are movie picks.
+    movies = page.get_by_role("group", name="Movies", exact=True)
+    movies.get_by_label("Search TMDB tags").fill("thanks")
+    movies.get_by_role("button", name="Add tag thanksgiving", exact=True).click()
 
-    held = page.get_by_role("list", name="Movies these picks would hold")
+    held = movies.get_by_role("list", name="Movies these picks would hold")
     expect(page.get_by_text("Would hold 1 of the 2 movies waiting in your inbox:")).to_be_visible(timeout=LOAD)
     expect(held).to_contain_text("Tagged film")
     expect(held).to_contain_text("tag “thanksgiving”")
@@ -236,4 +238,4 @@ def test_held_tags_preview_the_inbox_and_survive_a_reload(page: Page, app: Short
 
     app.wait_for_setting("requests.hold_tags", {str(THANKSGIVING_TAG): "thanksgiving"}, timeout_s=6)
     page.reload()
-    expect(page.get_by_role("button", name="Remove tag thanksgiving")).to_be_visible(timeout=LOAD)
+    expect(movies.get_by_role("button", name="Remove tag thanksgiving")).to_be_visible(timeout=LOAD)
