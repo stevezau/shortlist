@@ -18,6 +18,13 @@ All notable changes to this project are documented here. This project follows
   network it airs on, because TMDB can't search networks. The preview under each panel now also lists the
   matches an exception would send anyway. Your existing picks become the Movies panel unchanged, and the
   Shows panel starts empty, so nothing is held differently until you pick something.
+- **Let a studio through from the title it's holding.** TMDB has several studios of one name (there are two
+  Walt Disney Animation Studios), and its company search lists the one you mean far down, so a studio picked
+  from search could miss the title you wanted sent. In the preview under each panel, click a held title to
+  see its own studios on TMDB, and click **Let through** beside one: it becomes one of that panel's studio
+  exceptions, and the title moves to **Sent anyway**. The studio search is better too. It reads more of
+  TMDB's results, puts an exact name first and then names that start with what you typed, and shows each
+  studio's country and logo so the real one is easy to spot.
 
 ## [1.15.0] - 2026-11-08
 
