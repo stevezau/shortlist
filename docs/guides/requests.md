@@ -297,7 +297,8 @@ picks match still goes out on its own when it meets one of these:
 
 - **From a studio.** Search TMDB's companies and add the ones you trust, such as A24. This matches a
   title's production companies. For a show that is not the network it airs on: TMDB has no way to
-  search networks.
+  search networks. TMDB often has several studios of one name, so the surest way to add one is from a
+  title it's holding: in the preview, click the title, then **Let through** beside the studio.
 - **Rated at least.** A matching title rated this high or higher on your request rating source goes
   out anyway. Leave it blank to hold every match, however well rated.
 
