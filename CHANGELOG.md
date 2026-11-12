@@ -6,6 +6,19 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **Keep kinds of shows out of auto-send too, and let the titles you trust through.** **Don't request these
+  automatically** in **Settings → Requests** now has two panels, **Movies** and **Shows**, each with its own
+  genres and TMDB tags. The Shows panel offers TMDB's TV genres (Reality, Talk, Kids and News exist only for
+  shows) and suggests tags such as _anime_ and _adult animation_. A pick in one panel never holds the other
+  kind. Each panel also has **Exceptions · advanced**: a title your picks match still goes out on its own when
+  it comes **from a studio** you add (searched on TMDB, such as A24), or when it is **rated at least** the
+  score you set on your request rating source. For a show, the studio is its production company, not the
+  network it airs on, because TMDB can't search networks. The preview under each panel now also lists the
+  matches an exception would send anyway. Your existing picks become the Movies panel unchanged, and the
+  Shows panel starts empty, so nothing is held differently until you pick something.
+
 ## [1.15.0] - 2026-11-08
 
 ### Added
