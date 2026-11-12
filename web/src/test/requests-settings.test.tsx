@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,6 +62,7 @@ vi.mock("@/lib/api", () => {
       getSeerrOptions: () => getSeerrOptions(),
       previewHolds: () => Promise.resolve({ checked: 0, held: [], unread: 0 }),
       getTmdbTags: () => Promise.resolve([]),
+      getTmdbCompanies: () => Promise.resolve([]),
     },
   };
 });
@@ -181,15 +182,40 @@ describe("RequestsSettings", () => {
       "requests.hold_genres": [99],
       "requests.hold_tags": { "9716": "stand-up comedy" },
     });
-    expect(await screen.findByRole("button", { name: "Documentary" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: /Remove tag stand-up comedy/i })).toBeInTheDocument();
+    const movies = within(await screen.findByRole("group", { name: "Movies" }));
+    expect(movies.getByRole("button", { name: "Documentary" })).toHaveAttribute("aria-pressed", "true");
+    expect(movies.getByRole("button", { name: /Remove tag stand-up comedy/i })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Music" }));
-    await userEvent.click(screen.getByRole("button", { name: "Add tag concert film" }));
+    await userEvent.click(movies.getByRole("button", { name: "Music" }));
+    await userEvent.click(movies.getByRole("button", { name: "Add tag concert film" }));
     await waitFor(() =>
       expect(putSettings.mock.calls.at(-1)?.[0]).toMatchObject({
         "requests.hold_genres": [99, 10402],
         "requests.hold_tags": { "9716": "stand-up comedy", "156205": "concert film" },
+      }),
+    );
+  });
+
+  it("saves the Shows panel to its own keys, leaving the movie picks alone", async () => {
+    renderPanel({
+      "requests.enabled": true,
+      "requests.hold_genres": [99],
+      "requests.hold_show_except_min_rating": 8.5,
+    });
+    const shows = within(await screen.findByRole("group", { name: "Shows" }));
+    // The saved movie genre is a movie pick: the Shows panel's Documentary is its own button.
+    expect(shows.getByRole("button", { name: "Documentary" })).toHaveAttribute("aria-pressed", "false");
+    expect(shows.getByRole("button", { name: /Exceptions/ })).toHaveTextContent("1 exception");
+
+    await userEvent.click(shows.getByRole("button", { name: "Reality" }));
+    await userEvent.click(shows.getByRole("button", { name: "Add tag anime" }));
+    await waitFor(() =>
+      expect(putSettings.mock.calls.at(-1)?.[0]).toMatchObject({
+        "requests.hold_genres": [99],
+        "requests.hold_show_genres": [10764],
+        "requests.hold_show_tags": { "210024": "anime" },
+        "requests.hold_show_except_companies": {},
+        "requests.hold_show_except_min_rating": 8.5,
       }),
     );
   });
