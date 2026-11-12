@@ -225,6 +225,23 @@ class TestHoldPreview:
             {"tmdb_id": 4, "title": _TITLES[4], "year": None, "reason": "genre Documentary", "exception": "studio A24"}
         ]
 
+    def test_a_studio_list_tmdb_cannot_give_leaves_the_match_held(self, inbox: TestClient, monkeypatch):
+        """A run holds a title whose exception it cannot check, so the preview must say the same."""
+        tmdb = _fake_tmdb()
+        real_details = tmdb.details.side_effect
+
+        def details_without_studios(tmdb_id, media_type):
+            payload = real_details(tmdb_id, media_type)
+            if tmdb_id == 4:
+                del payload["production_companies"]
+            return payload
+
+        tmdb.details.side_effect = details_without_studios
+        result = _preview(inbox, monkeypatch, tmdb=tmdb, genres=[DOCUMENTARY], except_companies=[A24])
+        assert [(h["tmdb_id"], h["companies"]) for h in result["held"]] == [(1, []), (4, [])]
+        assert result["excepted"] == []
+        assert result["unread"] == 0
+
     def test_a_rating_exception_reads_the_rating_the_inbox_recorded(self, inbox: TestClient, monkeypatch):
         result = _preview(inbox, monkeypatch, media_type="show", tags=[ANIME], except_min_rating=8.5)
         assert [h["tmdb_id"] for h in result["held"]] == [5]
