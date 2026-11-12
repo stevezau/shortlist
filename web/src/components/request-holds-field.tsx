@@ -15,6 +15,7 @@ import {
   TMDB_SHOW_GENRES,
   exceptionCount,
   joinTitles,
+  type HoldCompany,
   type HoldDraft,
   type HoldMedia,
 } from "@/lib/request-holds";
@@ -242,7 +243,16 @@ function HoldPanel({
 
       <HoldExceptions media={media} draft={draft} ratingLabel={ratingLabel} onChange={onChange} />
 
-      <HoldPreviewPanel media={media} draft={draft} />
+      <HoldPreviewPanel
+        media={media}
+        draft={draft}
+        onLetThrough={(studio) => {
+          // Every id of the name in one save, each stored on its own: a run matches ids, not names.
+          const had = new Set(draft.companies.map((c) => c.id));
+          const added = studio.filter((c) => !had.has(c.id)).map((c) => ({ id: c.id, name: c.name }));
+          onChange({ ...draft, companies: [...draft.companies, ...added] });
+        }}
+      />
     </fieldset>
   );
 }
@@ -345,8 +355,11 @@ function HoldExceptions({
                     searchBox.current?.focus();
                   }}
                 >
-                  <span className="font-medium">{company.name}</span>
-                  {company.country && <span className="text-muted-foreground"> ({company.country})</span>}
+                  <span className="inline-flex flex-wrap items-center gap-x-1.5">
+                    {company.logo_path && <CompanyLogo path={company.logo_path} />}
+                    <span className="font-medium">{company.name}</span>
+                    {company.country && <span className="text-muted-foreground">({company.country})</span>}
+                  </span>
                 </SearchResultRow>
               )}
             </SeasonSearch>
@@ -385,8 +398,21 @@ function HoldExceptions({
 
 /** What the picks would hold among the titles of this kind waiting in the inbox right now, so a pick that
  *  is broader than it looks (a tag on musicals too) shows itself before a run acts on it. */
-function HoldPreviewPanel({ media, draft }: { media: HoldMedia; draft: HoldDraft }) {
+function HoldPreviewPanel({
+  media,
+  draft,
+  onLetThrough,
+}: {
+  media: HoldMedia;
+  draft: HoldDraft;
+  /** One studio as the owner sees it: every TMDB company of that name on the title. */
+  onLetThrough: (studio: HoldCompany[]) => void;
+}) {
   const panel = PANELS[media];
+  const rowId = useId();
+  // One row open at a time: it is a quick look at one title's studios, not a second editor.
+  const [open, setOpen] = useState<number | null>(null);
+  const chosen = new Set(draft.companies.map((c) => c.id));
   // Debounced as a string: a fresh object each render would restart the timer on every render.
   const key = JSON.stringify({
     media_type: media,
@@ -451,16 +477,75 @@ function HoldPreviewPanel({ media, draft }: { media: HoldMedia; draft: HoldDraft
             aria-label={`${panel.title} these picks would hold`}
             className="divide-y rounded-md border bg-card"
           >
-            {held.map((h) => (
-              <li key={h.tmdb_id} className="flex flex-wrap items-baseline justify-between gap-x-3 px-3 py-1.5 text-sm">
-                <span className="min-w-0">
-                  {h.story && <AlertTriangle aria-label="Story film" className="mr-1 inline h-3.5 w-3.5 text-warning" />}
-                  {h.title}
-                  {h.year ? <span className="text-muted-foreground"> ({h.year})</span> : null}
-                </span>
-                <span className="text-xs text-muted-foreground">{h.reason}</span>
-              </li>
-            ))}
+            {held.map((h) => {
+              const expanded = open === h.tmdb_id;
+              const studiosId = `${rowId}-${h.tmdb_id}`;
+              const studios = studiosByName(h.companies ?? []);
+              return (
+                <li key={h.tmdb_id} className="text-sm">
+                  {/* The whole row opens the title's own studios. TMDB's company search buries the studio
+                      people mean, and has several of one name (two Walt Disney Animation Studios): the
+                      ones on the title are the ones a run will match. */}
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-controls={studiosId}
+                    onClick={() => setOpen(expanded ? null : h.tmdb_id)}
+                    className="flex w-full flex-wrap items-baseline justify-between gap-x-3 px-3 py-1.5 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  >
+                    <span className="min-w-0">
+                      {h.story && (
+                        <AlertTriangle aria-label="Story film" className="mr-1 inline h-3.5 w-3.5 text-warning" />
+                      )}
+                      {h.title}
+                      {h.year ? <span className="text-muted-foreground"> ({h.year})</span> : null}
+                    </span>
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      {h.reason}
+                      <ChevronDown
+                        aria-hidden="true"
+                        className={cn(
+                          "h-3.5 w-3.5 transition-transform motion-reduce:transition-none",
+                          expanded && "rotate-180",
+                        )}
+                      />
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div id={studiosId} className="space-y-1.5 px-3 pb-2 text-xs text-muted-foreground">
+                      {studios.length === 0 ? (
+                        <p>TMDB lists no studios for this {panel.one}, so none can let it through.</p>
+                      ) : (
+                        <>
+                          <p>Its studios on TMDB. Let one through, and any match from it goes out on its own:</p>
+                          <ul aria-label={`Studios of ${h.title}`} className="space-y-1">
+                            {studios.map((studio) => (
+                              <li key={studio[0].id} className="flex flex-wrap items-center justify-between gap-x-3">
+                                <span className="text-foreground">{studio[0].name}</span>
+                                {studio.every((c) => chosen.has(c.id)) ? (
+                                  <span>Already let through</span>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-auto px-1.5 py-0.5 text-xs font-medium text-primary"
+                                    aria-label={`Let ${studio[0].name} through`}
+                                    onClick={() => onLetThrough(studio)}
+                                  >
+                                    Let through
+                                  </Button>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         {excepted.length > 0 && (
@@ -486,5 +571,36 @@ function HoldPreviewPanel({ media, draft }: { media: HoldMedia; draft: HoldDraft
     >
       {content}
     </section>
+  );
+}
+
+/** A title's companies grouped by name (trimmed, any case), in TMDB's order. TMDB can list one studio
+ *  twice under two ids (Moana 2 carries two Walt Disney Animation Studios), and an owner letting "it"
+ *  through means both: one row and one button for the name, every id behind it. */
+function studiosByName(companies: readonly HoldCompany[]): [HoldCompany, ...HoldCompany[]][] {
+  const byName = new Map<string, [HoldCompany, ...HoldCompany[]]>();
+  for (const company of companies) {
+    const name = company.name.trim().toLowerCase();
+    const studio = byName.get(name);
+    if (studio) studio.push(company);
+    else byName.set(name, [company]);
+  }
+  return [...byName.values()];
+}
+
+/** A studio's TMDB logo, so the real one stands out among several of one name. Logos are mostly dark on
+ *  transparent, hence the light chip in either theme; one that fails to load is simply left out. */
+function CompanyLogo({ path }: { path: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <img
+      // `w45` is TMDB's smallest logo bucket, and still sharp at 16px tall on a 2x display.
+      src={`https://image.tmdb.org/t/p/w45${path}`}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-4 w-auto max-w-12 rounded-sm bg-white object-contain px-0.5"
+    />
   );
 }

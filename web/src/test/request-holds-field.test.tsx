@@ -75,11 +75,38 @@ const asked = (media: "movie" | "show") =>
 const PREVIEW: HoldPreview = {
   checked: 14,
   held: [
-    { tmdb_id: 1, title: "BTS: Permission to Dance on Stage", year: 2022, reason: "tag “concert”", story: false },
-    { tmdb_id: 2, title: "A Star Is Born", year: 2018, reason: "tag “concert”", story: true },
+    {
+      tmdb_id: 1,
+      title: "BTS: Permission to Dance on Stage",
+      year: 2022,
+      reason: "tag “concert”",
+      story: false,
+      companies: [],
+    },
+    {
+      tmdb_id: 2,
+      title: "A Star Is Born",
+      year: 2018,
+      reason: "tag “concert”",
+      story: true,
+      companies: [{ id: 3, name: "Live Nation Productions" }],
+    },
   ],
   unread: 1,
   excepted: [],
+};
+
+/** Moana 2 as TMDB lists it, held by the Animation genre. */
+const MOANA_2 = {
+  tmdb_id: 1241982,
+  title: "Moana 2",
+  year: 2024,
+  reason: "genre Animation",
+  story: true,
+  companies: [
+    { id: 2, name: "Walt Disney Pictures" },
+    { id: 6125, name: "Walt Disney Animation Studios" },
+  ],
 };
 
 describe("RequestHoldsField", () => {
@@ -208,6 +235,104 @@ describe("RequestHoldsField", () => {
     ).toBeInTheDocument();
   });
 
+  describe("a held row", () => {
+    it("opens to the title's own studios, one row at a time", async () => {
+      renderField({ movies: { tags: [{ id: 6029, name: "concert" }] } });
+      const born = await screen.findByRole("button", { name: /A Star Is Born/ });
+      const bts = screen.getByRole("button", { name: /BTS: Permission to Dance on Stage/ });
+      expect(born).toHaveAttribute("aria-expanded", "false");
+
+      await userEvent.click(born);
+      expect(born).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByRole("button", { name: "Let Live Nation Productions through" })).toBeInTheDocument();
+
+      await userEvent.click(bts);
+      expect(born).toHaveAttribute("aria-expanded", "false");
+      expect(screen.getByText(/TMDB lists no studios for this movie/i)).toBeInTheDocument();
+    });
+
+    it("lets a studio through from the title, and the preview sends the title anyway", async () => {
+      previewHolds.mockImplementation((body: HoldPreviewInput) =>
+        Promise.resolve(
+          body.except_companies?.includes(6125)
+            ? {
+                checked: 3,
+                held: [],
+                unread: 0,
+                excepted: [{ ...MOANA_2, exception: "studio Walt Disney Animation Studios" }],
+              }
+            : { checked: 3, held: [MOANA_2], unread: 0, excepted: [] },
+        ),
+      );
+      renderField({ movies: { genres: [16] } });
+      await userEvent.click(await screen.findByRole("button", { name: /Moana 2/ }));
+      await userEvent.click(screen.getByRole("button", { name: "Let Walt Disney Animation Studios through" }));
+
+      // Saved exactly as the studio search would save it: the id on the title, with its name.
+      expect(latest.movies.companies).toEqual([{ id: 6125, name: "Walt Disney Animation Studios" }]);
+      await waitFor(() => expect(asked("movie").at(-1)).toMatchObject({ except_companies: [6125] }));
+      expect(await screen.findByText("Sent anyway (exception): Moana 2.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Moana 2/ })).toBeNull();
+      expect(panel("Movies").getByRole("button", { name: /Exceptions/ })).toHaveTextContent("1 exception");
+    });
+
+    it("merges a studio TMDB lists twice into one row that lets every id through in one save", async () => {
+      const moana = {
+        ...MOANA_2,
+        companies: [
+          { id: 6125, name: "Walt Disney Animation Studios" },
+          { id: 2, name: "Walt Disney Pictures" },
+          { id: 158526, name: " walt disney animation studios" },
+        ],
+      };
+      previewHolds.mockResolvedValue({ checked: 3, held: [moana], unread: 0, excepted: [] });
+      renderField({ movies: { genres: [16], companies: [{ id: 41077, name: "A24" }] } });
+      await userEvent.click(await screen.findByRole("button", { name: /Moana 2/ }));
+      const studios = within(screen.getByRole("list", { name: "Studios of Moana 2" }));
+      expect(studios.getAllByRole("listitem").map((li) => li.firstChild?.textContent)).toEqual([
+        "Walt Disney Animation Studios",
+        "Walt Disney Pictures",
+      ]);
+      expect(studios.getAllByRole("button", { name: "Let Walt Disney Animation Studios through" })).toHaveLength(1);
+
+      const saves = previewHolds.mock.calls.length;
+      await userEvent.click(studios.getByRole("button", { name: "Let Walt Disney Animation Studios through" }));
+      // Stored as the separate ids a run matches, both from the one click.
+      expect(latest.movies.companies).toEqual([
+        { id: 41077, name: "A24" },
+        { id: 6125, name: "Walt Disney Animation Studios" },
+        { id: 158526, name: " walt disney animation studios" },
+      ]);
+      await waitFor(() => expect(asked("movie").at(-1)).toMatchObject({ except_companies: [6125, 41077, 158526] }));
+      expect(previewHolds.mock.calls.length).toBe(saves + 1);
+      expect(studios.getByText("Already let through")).toBeInTheDocument();
+    });
+
+    it("still offers a merged studio while any of its ids is missing", async () => {
+      const moana = {
+        ...MOANA_2,
+        companies: [
+          { id: 6125, name: "Walt Disney Animation Studios" },
+          { id: 158526, name: "Walt Disney Animation Studios" },
+        ],
+      };
+      previewHolds.mockResolvedValue({ checked: 3, held: [moana], unread: 0, excepted: [] });
+      renderField({ movies: { genres: [16], companies: [{ id: 6125, name: "Walt Disney Animation Studios" }] } });
+      await userEvent.click(await screen.findByRole("button", { name: /Moana 2/ }));
+      await userEvent.click(screen.getByRole("button", { name: "Let Walt Disney Animation Studios through" }));
+      expect(latest.movies.companies.map((c) => c.id)).toEqual([6125, 158526]);
+    });
+
+    it("says when a studio on the title is already let through", async () => {
+      previewHolds.mockResolvedValue({ checked: 3, held: [MOANA_2], unread: 0, excepted: [] });
+      renderField({ movies: { genres: [16], companies: [{ id: 2, name: "Walt Disney Pictures" }] } });
+      await userEvent.click(await screen.findByRole("button", { name: /Moana 2/ }));
+      expect(screen.queryByRole("button", { name: "Let Walt Disney Pictures through" })).toBeNull();
+      expect(screen.getByText("Already let through")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Let Walt Disney Animation Studios through" })).toBeInTheDocument();
+    });
+  });
+
   describe("exceptions", () => {
     it("are folded away, and the folded row says how many are set", async () => {
       renderField({ shows: { companies: [{ id: 3268, name: "HBO" }], minRating: 8.5 } });
@@ -219,8 +344,24 @@ describe("RequestHoldsField", () => {
       expect(panel("Shows").queryByLabelText("Rated at least")).toBeNull();
     });
 
+    it("show each found studio's country and TMDB logo, so the real one stands out", async () => {
+      getTmdbCompanies.mockResolvedValue([
+        { id: 6125, name: "Walt Disney Animation Studios", country: "US", logo_path: "/wdas.png" },
+        { id: 158526, name: "Walt Disney Animation Studios", country: "", logo_path: "" },
+      ]);
+      renderField();
+      const movies = panel("Movies");
+      await userEvent.click(movies.getByRole("button", { name: /Exceptions/ }));
+      await userEvent.type(movies.getByLabelText("Search TMDB studios"), "walt");
+      const found = within(await movies.findByRole("list", { name: "TMDB studios found" }));
+      const [real, empty] = found.getAllByRole("listitem");
+      expect(real).toHaveTextContent("(US)");
+      expect(real?.querySelector("img")).toHaveAttribute("src", "https://image.tmdb.org/t/p/w45/wdas.png");
+      expect(empty?.querySelector("img")).toBeNull();
+    });
+
     it("add a studio from a TMDB company search, and remove it again", async () => {
-      getTmdbCompanies.mockResolvedValue([{ id: 41077, name: "A24", country: "US" }]);
+      getTmdbCompanies.mockResolvedValue([{ id: 41077, name: "A24", country: "US", logo_path: "" }]);
       renderField({ movies: { genres: [99] } });
       const movies = panel("Movies");
       await userEvent.click(movies.getByRole("button", { name: /Exceptions/ }));
