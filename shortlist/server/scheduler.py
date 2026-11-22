@@ -38,9 +38,9 @@ JOBS_SWEEP_JOB_ID = "jobs.sweep"
 
 #: One event per scheduled job APScheduler skipped for starting later than its grace. Read by the bell.
 SCHEDULE_MISSED_SCOPE = "schedule.missed"
-# The queue worker's own ticks. A late one is caught by the next tick a minute later, so recording it would
-# only bury the misses that matter.
-_UNRECORDED_MISSES = frozenset({JOBS_DRAIN_JOB_ID, JOBS_SWEEP_JOB_ID})
+# The queue worker's own ticks and the early requests-row poll. A late one is caught by the next tick, so
+# recording it would only bury the misses that matter.
+_UNRECORDED_MISSES = frozenset({JOBS_DRAIN_JOB_ID, JOBS_SWEEP_JOB_ID, REQUEST_LANDINGS_JOB_ID})
 
 
 #: The built-in cron for each schedulable settings key, and the ONLY place each of these expressions

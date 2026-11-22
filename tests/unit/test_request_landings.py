@@ -462,6 +462,25 @@ class TestARunBuiltTheWayProductionBuildsIt:
     finished run ever settled anything (#191).
     """
 
+    def test_an_errored_early_run_still_covers_its_requests(self, sessions, tmp_path):
+        from shortlist.server.services.run_service import RunService
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.services.sse import EventBus
+
+        row, (u0,) = seed(sessions)
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
+        item = Owed(1, 603, MediaType.MOVIE, datetime.now(UTC) - timedelta(minutes=20), row, u0)
+        with sessions() as s:
+            run = service.queue_run_in_session(
+                s, trigger="request_landed", dry_run=False, user_ids=[u0], collection_ids=[row]
+            )
+            run_id = run.id
+            s.commit()
+        service._mark_run_error(run_id, {"error": "boom"})
+        with sessions() as s:
+            assert s.get(Run, run_id).stats["error"] == "boom"
+            assert still_owed(s, [item]) == []
+
     def test_a_finished_early_run_with_an_in_row_verdict_settles_the_request(self, sessions, tmp_path):
         from shortlist.engine.models import RunReport
         from shortlist.server.services.run_persistence import _finalize_run

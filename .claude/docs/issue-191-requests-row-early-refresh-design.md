@@ -1,3 +1,5 @@
+> Note: the two settings (`requests.landed_poll_cron`, `requests.landed_min_gap_min`) and the Jobs-page kind below were replaced by a fixed 5-minute poll and a 60-minute `MIN_GAP`.
+
 # Issue #191 — update a "Your requests" row soon after a request lands
 
 Status: design, 2026-11-22. Approach chosen by the owner: **poll Overseerr** (not a webhook).

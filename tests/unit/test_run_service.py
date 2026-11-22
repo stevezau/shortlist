@@ -272,6 +272,8 @@ class TestRunExecution:
             "privacy_unchecked": [],
             "privacy_write_failed": [],
             "privacy_left_alone": [],
+            # Queued-run scope survives finalising, so the early requests-row poll can tell what the run covered (#191).
+            "scope": {"row_slugs": ["picked"], "user_slugs": ["sarah", "mike"]},
         }
         with sessions() as session:
             run_users = session.query(RunUser).filter_by(run_id=run.id).all()

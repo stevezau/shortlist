@@ -790,10 +790,7 @@ class RunService:
             run = session.get(Run, run_id)
             run.status = "error"
             run.finished_at = datetime.now(UTC)
-            run.stats = {
-                **{key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_")},
-                **stats,
-            }
+            run.stats = {**stats, **run_persistence.kept_stats(run.stats)}
             session.commit()
 
     # -- persistence + audit (delegated to run_persistence) -------------------------------

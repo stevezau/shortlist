@@ -1741,6 +1741,16 @@ def persist_request_queue(session: Session, run_id: int, report) -> int:
     return len(waiting)
 
 
+def kept_stats(stats: dict | None) -> dict:
+    """The queue-time stats keys a run keeps when it finishes, by either road (finalised or errored).
+
+    `assistant_*` is the assistant handoff; `scope` lets the early requests-row poll tell what the run covered
+    (#191). One helper for both writers so they cannot drift. `expected_*` stay dropped: the Runs page falls
+    back to `run.users` once a run is done.
+    """
+    return {key: value for key, value in (stats or {}).items() if key.startswith("assistant_") or key == "scope"}
+
+
 def _finalize_run(
     run: Run,
     report,
@@ -1859,5 +1869,4 @@ def _finalize_run(
     # after assignment would not reliably mark it dirty.
     # `scope` rides along so the early requests-row poll can tell what a finished run covered (#191);
     # `expected_*` stay dropped, because the Runs page falls back to `run.users` once a run is done.
-    kept = {key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_") or key == "scope"}
-    run.stats = {**kept, **stats}
+    run.stats = {**stats, **kept_stats(run.stats)}

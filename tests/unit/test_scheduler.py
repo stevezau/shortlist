@@ -400,7 +400,7 @@ class TestSchedulerLateness:
         assert job.payload["item"]["event"] == "job.skipped"
         assert "Sync watch history" in job.payload["item"]["title"]
 
-    @pytest.mark.parametrize("job_id", ["jobs.drain", "jobs.sweep"])
+    @pytest.mark.parametrize("job_id", ["jobs.drain", "jobs.sweep", "request-landings"])
     def test_a_drain_tick_missed_or_skipped_writes_nothing(self, app: SimpleNamespace, job_id: str) -> None:
         """The worker ticks every minute; `jobs.drain` hit max_instances 27 times in 8 days on a live server."""
         from apscheduler.events import (

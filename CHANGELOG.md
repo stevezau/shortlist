@@ -13,7 +13,7 @@ All notable changes to this project are documented here. This project follows
   person's requests row, instead of waiting for the row's schedule. Updates are batched and limited to one
   an hour. The new **Update as soon as a request
   lands** switch on each requests row is on by default, including existing requests rows after you upgrade.
-  Requests made only through your own Radarr/Sonarr tags still wait for the schedule. Adds migration 0116.
+  Requests made only through your own Radarr/Sonarr tags still wait for the schedule. After upgrading, rows may get one early update for requests that landed in the previous day. Adds migration 0116.
 
 ## [1.15.0] - 2026-11-08
 

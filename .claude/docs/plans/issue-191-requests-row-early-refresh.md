@@ -1,3 +1,5 @@
+> Note: the two settings (`requests.landed_poll_cron`, `requests.landed_min_gap_min`) and the Jobs-page kind below were replaced by a fixed 5-minute poll and a 60-minute `MIN_GAP`.
+
 # Issue #191 — early "Your requests" update: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
