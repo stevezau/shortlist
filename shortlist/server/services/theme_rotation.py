@@ -327,7 +327,7 @@ def author_for_person(
     """
     if unavailable:
         raise ThemeAuthorError(unavailable)
-    media = _row_media(collection)
+    media = row_media(collection)
     index = library_index(
         plex,
         sessions,
@@ -565,7 +565,7 @@ def _theme_days(collection: Collection) -> int:
     return collection.theme_days or DEFAULT_THEME_DAYS
 
 
-def _row_media(collection: Collection) -> tuple[MediaType, ...]:
+def row_media(collection: Collection) -> tuple[MediaType, ...]:
     """The kinds to ask the AI for: the row's own setting, never the base theme's (which a draft may have narrowed)."""
     if collection.media in ("movie", "show"):
         return (MediaType(collection.media),)
@@ -809,7 +809,7 @@ def _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, aut
     )
     request = {
         "brief": theme.brief,
-        "media": _row_media(collection),
+        "media": row_media(collection),
         "curator": tool.curator,
         "tmdb": names,
         "plex": tool.plex,
