@@ -30,6 +30,9 @@ import type {
   WatchedFilters,
 } from "./types";
 
+/** What a picker search reads: the season editor's three, plus the request holds' show tags and studios. */
+type SearchKind = "tags" | "show-tags" | "companies" | "collections" | "library";
+
 /**
  * Every React Query key used anywhere in the app, in one place.
  *
@@ -93,7 +96,7 @@ export const queryKeys = {
   themePrompts: ["theme-prompts"] as const,
   theme: (id: number) => ["themes", id] as const,
   themeRotation: (collectionId: number) => ["theme-rotation", collectionId] as const,
-  seasonSearch: (kind: "tags" | "collections" | "library", q: string) =>
+  seasonSearch: (kind: SearchKind, q: string) =>
     ["season-search", kind, q] as const,
   libraryCollections: (key: string) => ["library-collections", key] as const,
   ownedCollections: ["owned-collections"] as const,
@@ -667,7 +670,7 @@ export function useSeasonNextDate(rule: DateRule) {
 /** The editor's searches answer nothing under 2 characters, so they aren't asked. */
 const MIN_SEARCH = 2;
 
-function useSeasonSearch<T>(kind: "tags" | "collections" | "library", q: string, load: (q: string) => Promise<T[]>) {
+function useSeasonSearch<T>(kind: SearchKind, q: string, load: (q: string) => Promise<T[]>) {
   const query = q.trim();
   return useQuery({
     queryKey: queryKeys.seasonSearch(kind, query),
@@ -679,8 +682,16 @@ function useSeasonSearch<T>(kind: "tags" | "collections" | "library", q: string,
   });
 }
 
-export function useTmdbTags(q: string) {
-  return useSeasonSearch("tags", q, api.getTmdbTags);
+/** TMDB tags matching `q`. The request holds' Shows panel asks with `media` "show", which counts shows
+ *  rather than films, so it is cached apart. */
+export function useTmdbTags(q: string, media: "movie" | "show" = "movie") {
+  const load = media === "show" ? (query: string) => api.getTmdbTags(query, "show") : api.getTmdbTags;
+  return useSeasonSearch(media === "show" ? "show-tags" : "tags", q, load);
+}
+
+/** TMDB production companies matching `q`, for the request holds' studio exceptions. */
+export function useTmdbCompanies(q: string) {
+  return useSeasonSearch("companies", q, api.getTmdbCompanies);
 }
 
 export function usePlexCollections(q: string) {

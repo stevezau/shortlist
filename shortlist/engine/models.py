@@ -985,6 +985,32 @@ class RequestSources:
 REQUEST_TARGETS = ("arr", "overseerr")
 
 
+@dataclass(frozen=True)
+class HoldFilter:
+    """One media type's "don't request these automatically" picks (see `request_holds`).
+
+    A title with ANY picked genre or tag waits in the inbox instead of being auto-sent, unless it meets
+    one of the exceptions: made by a picked production company, or rated at least ``except_min_rating``.
+    Movies and shows each have their own, because TMDB gives them different genre lists and an owner
+    holding stand-up specials rarely means the same thing for a sitcom.
+    """
+
+    # TMDB genre ids — the movie list for movies, the TV list for shows — and TMDB tag (keyword) ids.
+    genres: frozenset[int] = frozenset()
+    tags: frozenset[int] = frozenset()
+    # TMDB company ids, matched against the detail payload's `production_companies`. TMDB has no network
+    # search, so a show's network is not offered; its production companies are what can be picked.
+    except_companies: frozenset[int] = frozenset()
+    # On the request pass's chosen rating source, the same rating its floors read. None = off — not 0,
+    # which would let every matched title go and is a value nobody means.
+    except_min_rating: float | None = None
+
+    @property
+    def picked(self) -> bool:
+        """Whether anything can be held. The exceptions alone hold nothing, so they read nothing."""
+        return bool(self.genres or self.tags)
+
+
 @dataclass
 class RequestConfig:
     """Whether — and how conservatively — to ask Sonarr/Radarr for picks the library lacks.
@@ -1075,10 +1101,10 @@ class RequestConfig:
     # How many seasons "firstSeason"/"lastSeason" take, on either request route; ignored by the other
     # modes. 1 is what those two modes always meant, so an upgrade changes nothing.
     season_count: int = 1
-    # TMDB movie genre ids and tag (keyword) ids the owner never wants requested automatically. A movie
-    # with any of them waits in the inbox instead (`request_holds`); empty, the default, holds nothing.
-    hold_genres: frozenset[int] = frozenset()
-    hold_tags: frozenset[int] = frozenset()
+    # What the owner never wants requested automatically, per media type: a match waits in the inbox
+    # instead (`request_holds`). Empty, the default, holds nothing.
+    hold_movies: HoldFilter = HoldFilter()
+    hold_shows: HoldFilter = HoldFilter()
 
     def __post_init__(self) -> None:
         if self.max_per_row is None:
@@ -1089,6 +1115,10 @@ class RequestConfig:
         # `overseerr` target the route ignores is nothing but a way to send to the wrong app.
         if self.overseerr is not None:
             self.target = "overseerr"
+
+    def holds_for(self, media_type: MediaType) -> HoldFilter:
+        """The hold picks that apply to a title of this kind — never the other kind's."""
+        return self.hold_movies if media_type is MediaType.MOVIE else self.hold_shows
 
 
 @dataclass(frozen=True)

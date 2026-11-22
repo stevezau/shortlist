@@ -244,34 +244,58 @@ _MAX_HOLD_TAGS = 50
 _MAX_TAG_NAME = 200
 
 
-def _movie_genre_ids(value: object) -> str | None:
-    """TMDB movie genre ids, each once: the settings page offers only TMDB's fixed list."""
-    from shortlist.engine.themes import MOVIE_GENRE_IDS
+def _genre_ids(kind: str, known: frozenset[int]):
+    """TMDB genre ids of one kind, each once: the settings page offers only TMDB's fixed list."""
 
-    if not isinstance(value, list) or not all(type(v) is int for v in value):
-        return "must be a list of TMDB movie genre ids"
-    if len(set(value)) != len(value):
-        return "lists a genre twice"
-    unknown = [v for v in value if v not in MOVIE_GENRE_IDS]
-    return f"unknown TMDB movie genre id(s) {unknown}" if unknown else None
+    def check(value: object) -> str | None:
+        if not isinstance(value, list) or not all(type(v) is int for v in value):
+            return f"must be a list of TMDB {kind} genre ids"
+        if len(set(value)) != len(value):
+            return "lists a genre twice"
+        unknown = [v for v in value if v not in known]
+        return f"unknown TMDB {kind} genre id(s) {unknown}" if unknown else None
+
+    return check
 
 
-def _tmdb_tags(value: object) -> str | None:
-    """``{"<TMDB tag id>": "<its name>"}``, as the settings page's TMDB tag search returns them.
+def _tmdb_names(noun: str):
+    """``{"<TMDB id>": "<its name>"}``, as the settings page's TMDB tag or company search returns them.
 
     The name is stored beside the id so the page can show it without asking TMDB again; the run matches
     on the id alone.
     """
-    if not isinstance(value, dict):
-        return "must map TMDB tag ids to their names"
-    if len(value) > _MAX_HOLD_TAGS:
-        return f"too many tags (max {_MAX_HOLD_TAGS})"
-    for tag_id, name in value.items():
-        if not (isinstance(tag_id, str) and tag_id.isascii() and tag_id.isdigit() and int(tag_id) > 0):
-            return f"{tag_id!r} is not a TMDB tag id"
-        if not isinstance(name, str) or not name.strip() or len(name) > _MAX_TAG_NAME:
-            return f"tag {tag_id} needs a name of 1-{_MAX_TAG_NAME} characters"
-    return None
+
+    def check(value: object) -> str | None:
+        if not isinstance(value, dict):
+            return f"must map TMDB {noun} ids to their names"
+        if len(value) > _MAX_HOLD_TAGS:
+            return f"too many {noun}s (max {_MAX_HOLD_TAGS})"
+        for item_id, name in value.items():
+            if not (isinstance(item_id, str) and item_id.isascii() and item_id.isdigit() and int(item_id) > 0):
+                return f"{item_id!r} is not a TMDB {noun} id"
+            if not isinstance(name, str) or not name.strip() or len(name) > _MAX_TAG_NAME:
+                return f"{noun} {item_id} needs a name of 1-{_MAX_TAG_NAME} characters"
+        return None
+
+    return check
+
+
+def _movie_genre_ids(value: object) -> str | None:
+    from shortlist.engine.themes import MOVIE_GENRE_IDS
+
+    return _genre_ids("movie", MOVIE_GENRE_IDS)(value)
+
+
+def _show_genre_ids(value: object) -> str | None:
+    # A movie genre id is refused here even where it looks plausible (Action 28, Sci-Fi 878): shows carry
+    # TMDB's TV ids instead, so it would match no show, ever, while reading as a pick.
+    from shortlist.engine.request_holds import SHOW_GENRE_IDS
+
+    return _genre_ids("TV", SHOW_GENRE_IDS)(value)
+
+
+_tmdb_tags = _tmdb_names("tag")
+_tmdb_companies = _tmdb_names("company")
 
 
 def _known_sources(value: object) -> str | None:
@@ -338,6 +362,12 @@ VALIDATORS = {
     "requests.auto_send": _is_bool,
     "requests.hold_genres": _movie_genre_ids,
     "requests.hold_tags": _tmdb_tags,
+    "requests.hold_except_companies": _tmdb_companies,
+    "requests.hold_except_min_rating": _optional_bounded_float(0.0, 10.0),
+    "requests.hold_show_genres": _show_genre_ids,
+    "requests.hold_show_tags": _tmdb_tags,
+    "requests.hold_show_except_companies": _tmdb_companies,
+    "requests.hold_show_except_min_rating": _optional_bounded_float(0.0, 10.0),
     "candidates.sources": _known_sources,
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
     "llm_web.instructions": _text_at_most(MAX_INSTRUCTIONS_CHARS),

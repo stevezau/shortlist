@@ -217,8 +217,10 @@ class SeasonPreviewOut(PassthroughModel):
 class TagOut(PassthroughModel):
     id: int
     name: str
-    #: Films on TMDB with the tag, in or out of the libraries.
-    movies: int
+    #: Films on TMDB with the tag, in or out of the libraries. Null when the search counted shows instead.
+    movies: int | None = None
+    #: Shows on TMDB with the tag, for a ``media=show`` search (the request holds' Shows panel); else null.
+    shows: int | None = None
 
 
 class PlexCollectionOut(PassthroughModel):
@@ -358,15 +360,19 @@ async def next_date(body: DateRuleIO) -> dict:
 
 
 @router.get("/tmdb-tags", response_model=list[TagOut])
-async def tmdb_tags(request: Request, q: str = "") -> list[dict]:
-    """TMDB tags whose name matches ``q``, each with how many films TMDB tags with it."""
+async def tmdb_tags(request: Request, q: str = "", media: Literal["movie", "show"] = "movie") -> list[dict]:
+    """TMDB tags whose name matches ``q``, each with how many films (or, for ``media=show``, shows) carry it.
+
+    Tags are one id space for both, so only the count differs: a tag's film count says little about how
+    many shows it would hold.
+    """
     query = q.strip()
     if len(query) < _MIN_QUERY:
         return []
     tmdb = request.app.state.run_service.build_tmdb_only()
     if tmdb is None:
         raise HTTPException(status_code=503, detail=_NO_TMDB)
-    return await off_loop(lambda: tmdb.search_keywords(query), "TMDB tag search")
+    return await off_loop(lambda: tmdb.search_keywords(query, media_type=MediaType(media)), "TMDB tag search")
 
 
 @router.get("/plex-collections", response_model=list[PlexCollectionOut])

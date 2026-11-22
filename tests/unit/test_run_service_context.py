@@ -17,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 import shortlist.server.services.context_builder as context_builder_mod
 from shortlist.engine.clients.search import ExaClient, SearxngClient
 from shortlist.engine.history import ShareTokenWatchSource
-from shortlist.engine.models import MediaType, UserProfile, UserType
+from shortlist.engine.models import HoldFilter, MediaType, UserProfile, UserType
 from shortlist.server.db.models import PickRow, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.context_builder import ContextBuilder, make_search_client
@@ -2801,9 +2801,10 @@ class TestRowVisibilitySchedule:
 
 
 class TestBuildRequestHolds:
-    """The owner's held genres and tags reach the engine as id sets; none set holds nothing."""
+    """The owner's held genres, tags and exceptions reach the engine per media type; none set holds nothing."""
 
-    def test_picks_reach_the_engine_as_id_sets(self, sessions, tmp_path):
+    def test_the_original_keys_are_still_the_movie_picks(self, sessions, tmp_path):
+        """An upgrade must hold exactly what it held before: those keys predate the show picks."""
         values = {
             "requests.enabled": True,
             "requests.hold_genres": [99, 10402],
@@ -2811,10 +2812,31 @@ class TestBuildRequestHolds:
         }
         with TestBuildRequests()._store(sessions, tmp_path, values) as store:
             cfg = ContextBuilder.build_requests(store)
-        assert cfg.hold_genres == frozenset({99, 10402})
-        assert cfg.hold_tags == frozenset({156205, 9716})
+        assert cfg.hold_movies == HoldFilter(genres=frozenset({99, 10402}), tags=frozenset({156205, 9716}))
+        assert cfg.hold_shows == HoldFilter()
+
+    def test_show_picks_and_both_kinds_of_exception_reach_the_engine(self, sessions, tmp_path):
+        values = {
+            "requests.enabled": True,
+            "requests.hold_except_companies": {"41077": "A24"},
+            "requests.hold_except_min_rating": 0.0,
+            "requests.hold_show_genres": [10764, 10767],
+            "requests.hold_show_tags": {"210024": "anime"},
+            "requests.hold_show_except_companies": {"3268": "HBO"},
+            "requests.hold_show_except_min_rating": 8.5,
+        }
+        with TestBuildRequests()._store(sessions, tmp_path, values) as store:
+            cfg = ContextBuilder.build_requests(store)
+        # 0.0 is a real bar (send every match), not "off": only None turns the exception off.
+        assert cfg.hold_movies == HoldFilter(except_companies=frozenset({41077}), except_min_rating=0.0)
+        assert cfg.hold_shows == HoldFilter(
+            genres=frozenset({10764, 10767}),
+            tags=frozenset({210024}),
+            except_companies=frozenset({3268}),
+            except_min_rating=8.5,
+        )
 
     def test_unset_holds_nothing(self, sessions, tmp_path):
         with TestBuildRequests()._store(sessions, tmp_path, {"requests.enabled": True}) as store:
             cfg = ContextBuilder.build_requests(store)
-        assert cfg.hold_genres == frozenset() and cfg.hold_tags == frozenset()
+        assert cfg.hold_movies == HoldFilter() and cfg.hold_shows == HoldFilter()

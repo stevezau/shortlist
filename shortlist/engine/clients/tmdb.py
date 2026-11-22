@@ -40,6 +40,8 @@ _LIST_FIELDS = (
 #: What `list_item` keeps of a detail payload: a list item's fields (``genre_ids`` is built from ``genres``),
 #: plus the synopsis, which a detail read carries anyway.
 _ITEM_FIELDS = (*(field for field in _LIST_FIELDS if field != "genre_ids"), "overview")
+#: Companies one studio search returns, from TMDB's first two pages (20 a page) re-ranked.
+COMPANY_SEARCH_LIMIT = 20
 #: Tags whose film counts `search_keywords` reads at once.
 _KEYWORD_COUNT_WORKERS = 6
 
@@ -226,40 +228,77 @@ class TmdbClient:
             ValueError: the payload has no keyword list. A 404 reads as ``{}`` here, and "TMDB didn't
                 answer" must not pass for "this movie has no tags".
         """
-        keywords = self._get(f"/movie/{tmdb_id}/keywords").get("keywords")
-        if not isinstance(keywords, list) or not all(
-            isinstance(k, dict) and isinstance(k.get("id"), int) for k in keywords
-        ):
-            raise ValueError("TMDB returned no keyword list")
-        return {k["id"]: str(k.get("name") or k["id"]) for k in keywords}
+        return _keyword_map(self._get(f"/movie/{tmdb_id}/keywords").get("keywords"))
 
-    def search_keywords(self, query: str, limit: int = 10) -> list[dict]:
-        """TMDB tags whose name matches ``query``, each with how many films carry it — the season editor's
-        tag search.
+    def show_keywords(self, tmdb_id: int) -> dict[int, str]:
+        """A show's TMDB tags, ``{id: name}``, from one cached call.
+
+        Tags are one id space for films and shows, but the TV endpoint lists them under ``results`` where
+        the movie one says ``keywords`` (TMDB API v3 `GET /tv/{id}/keywords`).
+
+        Raises:
+            ValueError: the payload has no keyword list, as for :meth:`movie_keywords`.
+        """
+        return _keyword_map(self._get(f"/tv/{tmdb_id}/keywords").get("results"))
+
+    def search_keywords(self, query: str, limit: int = 10, media_type: MediaType = MediaType.MOVIE) -> list[dict]:
+        """TMDB tags whose name matches ``query``, each with how many titles of ``media_type`` carry it — the
+        season editor's and the request holds' tag search.
 
         A tag's count is ``total_results`` from page 1 of discover, read for every tag at once. Both reads
         are cached like any other.
 
         Returns:
-            ``{"id", "name", "movies"}`` per tag, in TMDB's order, at most ``limit`` of them.
+            ``{"id", "name", "movies"}`` per tag (``"shows"`` for a show search), in TMDB's order, at most
+            ``limit`` of them.
         """
         query = query.strip()
         if not query:
             return []
         tags = (self._get("/search/keyword", params={"query": query}).get("results") or [])[:limit]
+        kind, counted = ("movie", "movies") if media_type is MediaType.MOVIE else ("tv", "shows")
 
-        def films(tag: dict) -> int:
-            page = self._get("/discover/movie", params={"with_keywords": str(tag["id"]), "include_adult": "false"})
+        def titles(tag: dict) -> int:
+            page = self._get(f"/discover/{kind}", params={"with_keywords": str(tag["id"]), "include_adult": "false"})
             return int(page.get("total_results") or 0)
 
         # In copies of the caller's context, as `discover_all` reads its pages, so a retry warning stays
         # with the request that caused it.
         contexts = [contextvars.copy_context() for _ in tags]
         with ThreadPoolExecutor(max_workers=_KEYWORD_COUNT_WORKERS) as pool:
-            counts = list(pool.map(lambda context, tag: context.run(films, tag), contexts, tags))
-        return [
-            {"id": tag["id"], "name": tag["name"], "movies": movies} for tag, movies in zip(tags, counts, strict=True)
-        ]
+            counts = list(pool.map(lambda context, tag: context.run(titles, tag), contexts, tags))
+        return [{"id": tag["id"], "name": tag["name"], counted: n} for tag, n in zip(tags, counts, strict=True)]
+
+    def search_companies(self, query: str, limit: int = COMPANY_SEARCH_LIMIT) -> list[dict]:
+        """TMDB production companies whose name matches ``query`` — the request holds' studio exceptions.
+
+        TMDB's own order buries the studios an owner means: "disney" leads with Disney Türkiye and Disney
+        Research, and DreamWorks Animation is ninth for "dreamworks". So two pages are read and re-ranked
+        (:func:`rank_companies`). Each company carries its country and logo, because TMDB has many of one
+        name (a Warner Bros. per country and decade) and a logo is how the real studio stands out. TMDB has
+        no search for TV networks at all.
+
+        Returns:
+            ``{"id", "name", "country", "logo_path"}`` per company, best first, at most ``limit`` of them.
+            ``logo_path`` is TMDB's ("/abc.png"), or "" when it has none.
+        """
+        query = query.strip()
+        if not query:
+            return []
+        first = self._get("/search/company", params={"query": query})
+        found = list(first.get("results") or [])
+        if int(first.get("total_pages") or 1) > 1:
+            found += self._get("/search/company", params={"query": query, "page": 2}).get("results") or []
+        companies: dict[int, dict] = {}
+        for c in found:
+            if isinstance(c, dict) and isinstance(c.get("id"), int) and c["id"] not in companies:
+                companies[c["id"]] = {
+                    "id": c["id"],
+                    "name": str(c.get("name") or c["id"]),
+                    "country": str(c.get("origin_country") or ""),
+                    "logo_path": str(c.get("logo_path") or ""),
+                }
+        return rank_companies(list(companies.values()), query)[:limit]
 
     def genre_ids_for(self, tmdb_id: int, media_type: MediaType) -> list[int]:
         """A title's own genre ids — used to derive a person's dominant genres for discover."""
@@ -421,6 +460,36 @@ class TmdbClient:
         """
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         return (self._get(f"/{kind}/{tmdb_id}") or {}).get("overview") or ""
+
+
+def rank_companies(companies: list[dict], query: str) -> list[dict]:
+    """``companies`` best first for ``query``: an exact name, then names starting with it, then ones with a
+    logo, then the rest — each group in TMDB's order.
+
+    A logo is the cheapest sign of a company someone curates on TMDB: the studios people mean have one,
+    and the near-empty entries (a regional office, an archive) mostly don't.
+    """
+    needle = query.strip().casefold()
+
+    def group(company: dict) -> int:
+        name = company["name"].casefold()
+        if name == needle:
+            return 0
+        if name.startswith(needle):
+            return 1
+        return 2 if company.get("logo_path") else 3
+
+    return sorted(companies, key=group)
+
+
+def _keyword_map(keywords: object) -> dict[int, str]:
+    """``{id: name}`` from a keywords payload's list. A 404 reads as ``{}``, so the list missing raises:
+    "TMDB didn't answer" must not pass for "this title has no tags"."""
+    if not isinstance(keywords, list) or not all(
+        isinstance(k, dict) and isinstance(k.get("id"), int) for k in keywords
+    ):
+        raise ValueError("TMDB returned no keyword list")
+    return {k["id"]: str(k.get("name") or k["id"]) for k in keywords}
 
 
 def _normalise(title: str) -> str:

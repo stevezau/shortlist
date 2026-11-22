@@ -150,9 +150,12 @@ export type SeasonCollection = Schemas["CollectionIO"];
 export type SeasonPick = Schemas["PickIO"];
 /** The editor's three searches: TMDB tags, Plex collections, and titles in the libraries. */
 export type TmdbTag = Schemas["TagOut"];
-/** Which waiting inbox movies draft "don't request automatically" picks would hold (POST /api/requests/hold-preview). */
+/** Which waiting inbox movies or shows draft "don't request automatically" picks would hold, and which
+ *  an exception sends anyway (POST /api/requests/hold-preview). */
 export type HoldPreviewInput = Schemas["HoldPreviewIn"];
 export type HoldPreview = Schemas["HoldPreviewOut"];
+/** A TMDB production company, for the holds' "From a studio" exception (GET /api/requests/tmdb-companies). */
+export type TmdbCompany = Schemas["CompanyOut"];
 export type PlexCollectionMatch = Schemas["PlexCollectionOut"];
 export type LibraryTitle = Schemas["LibraryTitleOut"];
 export type RowEffectiveness = Schemas["RowEffectivenessOut"];

@@ -75,8 +75,17 @@ DEFAULTS: dict[str, Any] = {
     # Hybrid tier: titles clearing these higher bars auto-send; the rest queue for manual approval.
     "requests.auto_send": True,  # False = fully manual (every qualifying title waits for approval)
     # TMDB movie genre ids / tag ids ({"id": name}) never requested automatically: they wait in the inbox.
+    # Unprefixed because they predate the show picks: they are, and stay, the MOVIE picks.
     "requests.hold_genres": [],
     "requests.hold_tags": {},
+    # ...unless made by one of these TMDB companies ({"id": name}) or rated at least this (None = off).
+    "requests.hold_except_companies": {},
+    "requests.hold_except_min_rating": None,
+    # The same four for shows, with TMDB's TV genre ids. Empty by default, so an upgrade holds no show.
+    "requests.hold_show_genres": [],
+    "requests.hold_show_tags": {},
+    "requests.hold_show_except_companies": {},
+    "requests.hold_show_except_min_rating": None,
     "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
     "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
     "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)

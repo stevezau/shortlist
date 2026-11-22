@@ -471,6 +471,22 @@ class TestTmdbClient:
         assert sorted(call.request.url.params["with_keywords"] for call in discover.calls) == ["337336", "4543"]
         assert all(call.request.url.params["include_adult"] == "false" for call in discover.calls)
 
+    @respx.mock
+    def test_a_show_search_counts_each_tags_shows_from_tv_discover(self):
+        """Tags are one id space, so the search is the same; only the count asks the TV list."""
+        recorded = json.loads((FIXTURES / "tmdb_search_keyword.json").read_text())
+        respx.get("https://api.themoviedb.org/3/search/keyword").mock(return_value=httpx.Response(200, json=recorded))
+        movies = respx.get("https://api.themoviedb.org/3/discover/movie").mock(return_value=httpx.Response(500))
+        tv = respx.get("https://api.themoviedb.org/3/discover/tv").mock(
+            return_value=httpx.Response(200, json={"page": 1, "results": [], "total_results": 9})
+        )
+
+        found = TmdbClient("k").search_keywords("thanksgiving", limit=1, media_type=MediaType.SHOW)
+
+        assert found == [{"id": 4543, "name": "thanksgiving", "shows": 9}]
+        assert tv.calls[0].request.url.params["with_keywords"] == "4543"
+        assert not movies.called
+
     def test_search_keywords_for_a_blank_query_makes_no_call(self):
         assert TmdbClient("k").search_keywords("  ") == []
 

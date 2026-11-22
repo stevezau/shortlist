@@ -116,8 +116,8 @@ class _Tmdb:
     def list_item(self, tmdb_id: int, media_type: MediaType) -> dict | None:
         return None
 
-    def search_keywords(self, query: str, limit: int = 10) -> list[dict]:
-        self.searched.append((query, limit))
+    def search_keywords(self, query: str, limit: int = 10, media_type: MediaType = MediaType.MOVIE) -> list[dict]:
+        self.searched.append((query, limit, media_type))
         return self.tags
 
 
@@ -875,9 +875,19 @@ class TestSearches:
         _connect(monkeypatch, client, tmdb, None)
 
         assert client.get("/api/seasons/tmdb-tags?q=%20thanks%20").json() == [
-            {"id": 4543, "name": "thanksgiving", "movies": 120}
+            {"id": 4543, "name": "thanksgiving", "movies": 120, "shows": None}
         ]
-        assert tmdb.searched == [("thanks", 10)]
+        assert tmdb.searched == [("thanks", 10, MediaType.MOVIE)]
+
+    def test_a_show_search_counts_shows(self, client: TestClient, monkeypatch):
+        """The request holds' Shows panel asks how many SHOWS carry a tag: its film count says little."""
+        tmdb = _Tmdb(tags=[{"id": 210024, "name": "anime", "shows": 4100}])
+        _connect(monkeypatch, client, tmdb, None)
+
+        assert client.get("/api/seasons/tmdb-tags?q=anime&media=show").json() == [
+            {"id": 210024, "name": "anime", "movies": None, "shows": 4100}
+        ]
+        assert tmdb.searched == [("anime", 10, MediaType.SHOW)]
 
     def test_tmdb_tags_without_a_key_say_what_to_do(self, client: TestClient, monkeypatch):
         _connect(monkeypatch, client, None, None)

@@ -28,7 +28,7 @@ import {
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
-import { readHoldGenres, readHoldTags, writeHoldTags } from "@/lib/request-holds";
+import { readHolds, writeHolds, type HoldDraft } from "@/lib/request-holds";
 import { useArrOptions, useSeerrOptions } from "@/lib/queries";
 import {
   autoSendBarsMatchGuardrails,
@@ -38,7 +38,7 @@ import { selectedClass } from "@/lib/selected";
 import type { SonarrMonitor } from "@/lib/sonarr-monitor";
 import { asSeasonCount, asSonarrMonitor } from "@/lib/sonarr-monitor";
 import { hasMdblist } from "@/lib/sources";
-import type { SeasonTag, Settings } from "@/lib/types";
+import type { Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const MAX_PER_RUN = [3, 5, 10];
@@ -79,8 +79,8 @@ interface RequestsForm {
   maxYear: number;
   maxPerRun: number;
   autoSend: boolean;
-  holdGenres: number[];
-  holdTags: SeasonTag[];
+  movieHolds: HoldDraft;
+  showHolds: HoldDraft;
   autoMinDemand: number;
   autoMinRating: number;
   tag: string;
@@ -154,8 +154,8 @@ function readForm(settings: Settings): RequestsForm {
     maxYear: settingNumber(settings, "requests.max_year", 0),
     maxPerRun: settingNumber(settings, "requests.max_per_run", 5),
     autoSend: settingBool(settings, "requests.auto_send", true),
-    holdGenres: readHoldGenres(settings["requests.hold_genres"]),
-    holdTags: readHoldTags(settings["requests.hold_tags"]),
+    movieHolds: readHolds(settings, "movie"),
+    showHolds: readHolds(settings, "show"),
     autoMinDemand: settingNumber(settings, "requests.auto_min_demand", 3),
     autoMinRating: settingNumber(settings, "requests.auto_min_rating", 8),
     tag: settingString(settings, "requests.tag", "shortlist"),
@@ -606,8 +606,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.max_year": form.maxYear,
       "requests.max_per_run": form.maxPerRun,
       "requests.auto_send": form.autoSend,
-      "requests.hold_genres": form.holdGenres,
-      "requests.hold_tags": writeHoldTags(form.holdTags),
+      ...writeHolds(form.movieHolds, "movie"),
+      ...writeHolds(form.showHolds, "show"),
       "requests.auto_min_demand": form.autoMinDemand,
       "requests.auto_min_rating": form.autoMinRating,
       "requests.tag": form.tag.trim(),
@@ -945,10 +945,11 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 waits in the inbox, so there is nothing for these picks to hold. */}
             {form.autoSend && (
               <RequestHoldsField
-                genres={form.holdGenres}
-                tags={form.holdTags}
-                onGenres={(holdGenres) => set({ holdGenres })}
-                onTags={(holdTags) => set({ holdTags })}
+                movies={form.movieHolds}
+                shows={form.showHolds}
+                ratingLabel={ratingLabel}
+                onMovies={(movieHolds) => set({ movieHolds })}
+                onShows={(showHolds) => set({ showHolds })}
               />
             )}
 

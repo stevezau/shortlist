@@ -435,7 +435,7 @@ def _auto_eligible(
     can never be sent (see :func:`_shows_without_tvdb`), and a show on the *seerr route set to a mode it
     cannot take. ``refused`` are titles a send was refused for lately with a `STANDING_REFUSALS` status,
     keyed like ``already_handled``; each is held while the row would still send it the same way.
-    ``holds`` are the movies the owner's genre/tag filter keeps out of auto-send (see :mod:`request_holds`),
+    ``holds`` are the titles the owner's genre/tag filter keeps out of auto-send (see :mod:`request_holds`),
     each with what matched.
     """
     eligible: list[MissingTitle] = []
@@ -799,16 +799,17 @@ def _holds(
     """Which of one row's titles the owner's genre/tag filter holds, and on what.
 
     Only asked when something could auto-send: with auto-send off every title waits anyway, so the
-    filter has nothing to decide and costs no TMDB call. ``memo`` spans the run's rows — the picks are
-    global, so a title several rows offer is judged once.
+    filter has nothing to decide and costs no TMDB call. Each title is judged on its own kind's picks
+    alone. ``memo`` spans the run's rows — the picks are global, and so is the rating source an
+    exception reads, so a title several rows offer is judged once.
     """
-    if not cfg.auto_send or not (cfg.hold_genres or cfg.hold_tags):
+    if not cfg.auto_send or not (cfg.hold_movies.picked or cfg.hold_shows.picked):
         return {}
     held: dict[tuple[int, MediaType], str] = {}
     for m in titles:
         key = (m.tmdb_id, m.media_type)
         if key not in memo:
-            memo[key] = hold_reason(tmdb, m, genres=cfg.hold_genres, tags=cfg.hold_tags)
+            memo[key] = hold_reason(tmdb, m, cfg.holds_for(m.media_type))
         if memo[key]:
             held[key] = memo[key]
     return held

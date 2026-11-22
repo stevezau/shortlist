@@ -277,25 +277,40 @@ that would pass sit further down. A bigger budget reaches them.
 
 Concert films, music documentaries and stand-up specials often carry fan-inflated ratings, so they
 can clear the auto-send bar easily. To stop that, open **Settings → Requests**, find
-**Don't request these automatically**, and pick what to keep out:
+**Don't request these automatically**, and pick what to keep out. It has two panels, **Movies** and
+**Shows**, and each one's picks only ever hold its own kind:
 
-- **Genres.** TMDB's movie genres, such as Documentary. Genres are broad: Music also covers musicals
-  like _A Star Is Born_.
-- **TMDB tags.** The keywords TMDB attaches to films. Search for one, or click a suggestion: _concert
-  film_, _live performance_, _music documentary_, _stand-up comedy_, _behind the scenes_. A tag is
-  usually more precise than a genre. The broad _concert_ tag, for one, is also on _A Star Is Born_ and
-  _Almost Famous_.
+- **Genres.** TMDB's genres, such as Documentary. Movies and shows have separate lists on TMDB: the
+  Shows panel offers TMDB's TV genres, where Reality, Talk, Kids and News exist only for shows.
+  Genres are broad: Music also covers musicals like _A Star Is Born_.
+- **TMDB tags.** The keywords TMDB attaches to titles. Search for one, or click a suggestion: for
+  movies _concert film_, _live performance_, _music documentary_, _stand-up comedy_, _behind the
+  scenes_; for shows _anime_, _adult animation_, _stand-up comedy_. A tag is usually more precise
+  than a genre. The broad _concert_ tag, for one, is also on _A Star Is Born_ and _Almost Famous_.
 
-A movie with **any** genre or tag you picked is never sent automatically. It waits in the Requests
-inbox, marked **Held by your request filter**, and doesn't use an automatic slot. **Send** still
-sends it, so making an exception takes one click.
+A title with **any** genre or tag picked in its panel is never sent automatically. It waits in the
+Requests inbox, marked **Held by your request filter**, and doesn't use an automatic slot. **Send**
+still sends it, so making a one-off exception takes one click.
 
-Under your picks, a preview lists which movies waiting in your inbox right now would be held. A
-story film in that list is flagged: that usually means a pick is broader than you meant.
+For a standing exception, open **Exceptions · advanced** at the bottom of the panel. A title your
+picks match still goes out on its own when it meets one of these:
 
-This applies to movies only, and only while **Send the strongest titles without asking** is on.
-With it off, everything waits for you anyway. If TMDB can't be read during a run, the movie waits
-too, and the next run checks it again.
+- **From a studio.** Search TMDB's companies and add the ones you trust, such as A24. This matches a
+  title's production companies. For a show that is not the network it airs on: TMDB has no way to
+  search networks. TMDB often has several studios of one name, so the surest way to add one is from a
+  title it's holding: in the preview, click the title, then **Let through** beside the studio.
+- **Rated at least.** A matching title rated this high or higher on your request rating source goes
+  out anyway. Leave it blank to hold every match, however well rated.
+
+An exception only lifts the hold. The title still has to clear the bars for sending on its own.
+
+Under each panel's picks, a preview lists which titles waiting in your inbox right now would be
+held, and which matches an exception would send anyway. A story film in the movie list is flagged:
+that usually means a pick is broader than you meant.
+
+This only applies while **Send the strongest titles without asking** is on. With it off, everything
+waits for you anyway. If TMDB can't be read during a run, the title waits too, and the next run
+checks it again.
 
 ## Too many subtitles
 

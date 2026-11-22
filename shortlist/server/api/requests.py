@@ -20,10 +20,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from shortlist.engine.clients.http_retry import redact
-from shortlist.engine.models import MediaType
+from shortlist.engine.models import HoldFilter, MediaType
 from shortlist.engine.request_config import resolve_request_config
-from shortlist.engine.request_holds import is_story_film, match_hold
+from shortlist.engine.request_holds import is_story_film, match_exception, match_hold
 from shortlist.engine.requests import RequestBatch, request_titles_by_row
+from shortlist.server.api.seasons import off_loop
 from shortlist.server.assistant_auth.routes import BrowserOwnerDep
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, Event, RequestCandidate, iso_utc
@@ -465,17 +466,28 @@ class RowSourcesOut(PassthroughModel):
     tags: list[TagMatchOut]
 
 
-#: The inbox's movies a hold preview reads, most-wanted first. Each costs up to two TMDB reads the first
+#: The inbox's titles a hold preview reads, most-wanted first. Each costs up to two TMDB reads the first
 #: time (cached after), so an inbox of thousands must not turn one chip click into a minute of calls.
 HOLD_PREVIEW_LIMIT = 100
 _HOLD_PREVIEW_WORKERS = 8
+#: As the season editor's searches: one letter matches half of TMDB.
+_MIN_SEARCH = 2
 
 
 class HoldPreviewIn(BaseModel):
-    """Genres and tags the owner is considering, before they are saved."""
+    """One media type's genres, tags and exceptions the owner is considering, before they are saved."""
 
+    # Defaults to movies: the preview, like the picks, was movies-only before shows had their own.
+    media_type: Literal["movie", "show"] = "movie"
     genres: list[int] = Field(default_factory=list, max_length=30)
     tags: list[int] = Field(default_factory=list, max_length=60)
+    except_companies: list[int] = Field(default_factory=list, max_length=60)
+    except_min_rating: float | None = Field(default=None, ge=0.0, le=10.0)
+
+
+class CompanyRefOut(PassthroughModel):
+    id: int
+    name: str
 
 
 class HeldTitleOut(PassthroughModel):
@@ -483,63 +495,133 @@ class HeldTitleOut(PassthroughModel):
     title: str
     year: int | None
     reason: str  # "genre Music" | "tag “concert film”"
-    story: bool  # a story film the picks catch — a sign a pick is broader than meant
+    story: bool  # a story film the picks catch — a sign a pick is broader than meant (always false for a show)
+    # The title's TMDB production companies, so the settings page can offer "let this studio through" from
+    # the title the owner is looking at. TMDB's company search ranks the studios people mean too low to
+    # find (Walt Disney Animation Studios is not in the first ten for "disney"), and the id read off the
+    # title itself is the one the run will match.
+    companies: list[CompanyRefOut] = Field(default_factory=list)
+
+
+class ExceptedTitleOut(PassthroughModel):
+    tmdb_id: int
+    title: str
+    year: int | None
+    reason: str  # what matched, as for a held title
+    exception: str  # what lets it go anyway: "studio A24" | "rated 8.7"
 
 
 class HoldPreviewOut(PassthroughModel):
-    checked: int  # pending movies read (at most HOLD_PREVIEW_LIMIT)
+    checked: int  # pending titles of the asked kind read (at most HOLD_PREVIEW_LIMIT)
     held: list[HeldTitleOut]
-    unread: int  # pending movies TMDB couldn't answer for; a run would hold them too
+    unread: int  # pending titles TMDB couldn't answer for; a run would hold them too
+    # Titles the picks match that an exception sends anyway. Empty for a caller that sends no exceptions.
+    excepted: list[ExceptedTitleOut] = Field(default_factory=list)
 
 
 @router.post("/hold-preview", response_model=HoldPreviewOut)
 async def hold_preview(body: HoldPreviewIn, request: Request) -> dict:
-    """Which movies waiting in the inbox these genres/tags would hold — the settings page's live check.
+    """Which titles waiting in the inbox these picks would hold — the settings page's live check.
 
-    Reads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.
+    Judged as a run judges them (`request_holds`): the same genre/tag match, then the same exceptions,
+    with the rating the inbox recorded for each title. Reads TMDB through the shared cache, so a title a
+    run already looked at costs nothing. Nothing is saved.
     """
+    media_type = MediaType(body.media_type)
     with request.app.state.sessions() as session:
         rows = (
-            session.query(RequestCandidate.tmdb_id, RequestCandidate.title, RequestCandidate.year)
+            session.query(
+                RequestCandidate.tmdb_id, RequestCandidate.title, RequestCandidate.year, RequestCandidate.rating
+            )
             .filter(
                 ~RequestCandidate.hidden,
                 RequestCandidate.status == "pending",
-                RequestCandidate.media_type == MediaType.MOVIE.value,
+                RequestCandidate.media_type == media_type.value,
             )
             .order_by(RequestCandidate.demand.desc(), RequestCandidate.rating.desc(), RequestCandidate.id)
             .limit(HOLD_PREVIEW_LIMIT)
             .all()
         )
-    genres, tags = frozenset(body.genres), frozenset(body.tags)
-    if not (genres or tags):
-        return {"checked": len(rows), "held": [], "unread": 0}
+    holds = HoldFilter(
+        genres=frozenset(body.genres),
+        tags=frozenset(body.tags),
+        except_companies=frozenset(body.except_companies),
+        except_min_rating=body.except_min_rating,
+    )
+    if not holds.picked:
+        return {"checked": len(rows), "held": [], "unread": 0, "excepted": []}
     tmdb = request.app.state.run_service.build_tmdb_only()
     if tmdb is None:
         raise HTTPException(status_code=503, detail="Add a TMDB API key in Settings first.")
 
-    def judge(tmdb_id: int) -> tuple[str, bool] | None:
-        """``(reason, story)`` for a held movie, ``("", False)`` for an allowed one, None if TMDB can't say."""
-        try:
-            reason = match_hold(tmdb, tmdb_id, genres=genres, tags=tags)
-            if not reason:
-                return "", False
-            genre_ids = [g["id"] for g in tmdb.details(tmdb_id, MediaType.MOVIE).get("genres") or [] if "id" in g]
-            return reason, is_story_film(genre_ids)
-        except Exception as e:
-            logger.debug("hold preview: TMDB read for {} failed ({})", tmdb_id, type(e).__name__)
-            return None
+    def judge(row) -> tuple[str, bool, str, list[dict]] | None:
+        """``(reason, story, exception, companies)`` — ``("", False, "", [])`` for an allowed title, None if
+        TMDB can't say.
 
-    def judge_all() -> list[tuple[str, bool] | None]:
+        A failed exception read leaves the title held, as a run would hold it. The story flag and the
+        companies come from the one cached detail payload the genre and studio checks read.
+        """
+        try:
+            reason = match_hold(tmdb, row.tmdb_id, media_type, genres=holds.genres, tags=holds.tags)
+            if not reason:
+                return "", False, "", []
+            details = tmdb.details(row.tmdb_id, media_type)
+            story = media_type is MediaType.MOVIE and is_story_film(
+                g["id"] for g in details.get("genres") or [] if "id" in g
+            )
+        except Exception as e:
+            logger.debug("hold preview: TMDB read for {} failed ({})", row.tmdb_id, type(e).__name__)
+            return None
+        try:
+            exception = match_exception(tmdb, row.tmdb_id, media_type, float(row.rating or 0.0), holds)
+        except Exception as e:
+            logger.debug("hold preview: TMDB studio read for {} failed ({})", row.tmdb_id, type(e).__name__)
+            exception = ""
+        companies = [
+            {"id": c["id"], "name": str(c.get("name") or c["id"])}
+            for c in details.get("production_companies") or []
+            if isinstance(c, dict) and isinstance(c.get("id"), int)
+        ]
+        return reason, story, exception, companies
+
+    def judge_all() -> list[tuple[str, bool, str, list[dict]] | None]:
         with ThreadPoolExecutor(max_workers=_HOLD_PREVIEW_WORKERS, thread_name_prefix="hold-preview") as pool:
-            return list(pool.map(lambda tid: contextvars.copy_context().run(judge, tid), [r.tmdb_id for r in rows]))
+            return list(pool.map(lambda row: contextvars.copy_context().run(judge, row), rows))
 
     verdicts = await asyncio.to_thread(judge_all)
-    held = [
-        {"tmdb_id": r.tmdb_id, "title": r.title, "year": r.year, "reason": v[0], "story": v[1]}
-        for r, v in zip(rows, verdicts, strict=True)
-        if v is not None and v[0]
-    ]
-    return {"checked": len(rows), "held": held, "unread": sum(v is None for v in verdicts)}
+    held, excepted = [], []
+    for r, v in zip(rows, verdicts, strict=True):
+        if v is None or not v[0]:
+            continue
+        title = {"tmdb_id": r.tmdb_id, "title": r.title, "year": r.year, "reason": v[0]}
+        if v[2]:
+            excepted.append({**title, "exception": v[2]})
+        else:
+            held.append({**title, "story": v[1], "companies": v[3]})
+    return {"checked": len(rows), "held": held, "unread": sum(v is None for v in verdicts), "excepted": excepted}
+
+
+class CompanyOut(PassthroughModel):
+    id: int
+    name: str
+    country: str  # ISO 3166-1 code, "" when TMDB has none — how two companies of one name are told apart
+    logo_path: str = ""  # TMDB's logo path ("/abc.png"), "" when it has none; the real studios mostly do
+
+
+@router.get("/tmdb-companies", response_model=list[CompanyOut])
+async def tmdb_companies(request: Request, q: str = "") -> list[dict]:
+    """TMDB production companies whose name matches ``q``, best first, for the holds' "From a studio" exception.
+
+    Re-ranked from TMDB's first two pages (`TmdbClient.search_companies`): its own order buries the studios
+    an owner means under regional offices and archives of the same name.
+    """
+    query = q.strip()
+    if len(query) < _MIN_SEARCH:
+        return []
+    tmdb = request.app.state.run_service.build_tmdb_only()
+    if tmdb is None:
+        raise HTTPException(status_code=503, detail="Add a TMDB API key in Settings first.")
+    return await off_loop(lambda: tmdb.search_companies(query), "TMDB company search")
 
 
 @router.get("/row-sources", response_model=RowSourcesOut)
