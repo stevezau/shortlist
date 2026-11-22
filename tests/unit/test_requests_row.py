@@ -34,6 +34,7 @@ from shortlist.engine.requests_row import (
     collect_requests,
     parse_requester_tag,
     pattern_matches,
+    seerr_identity,
 )
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -1115,3 +1116,14 @@ class TestAMalformedOverseerrPageFailsTheRead:
         ledger = _collect_from_seerr({})
 
         assert ledger.complete is True and len(ledger.titles) == 7
+
+
+def test_seerr_identity_matches_collect_requests():
+    a, b, c, d = _person(1, seerr_user_id=7), _person(2, seerr_user_id=8), _person(3, seerr_user_id=8), _person(4)
+    read = {7: 999, 8: 888, 9: d.plex_account_id, 10: None}
+    seerr_plex, chosen = seerr_identity([a, b, c, d], read)
+    assert chosen == {7: a.plex_account_id, 8: None}
+    assert seerr_plex[7] == a.plex_account_id  # a chosen account beats plexId
+    assert seerr_plex[8] is None  # two people chose it: nobody
+    assert seerr_plex[9] == d.plex_account_id  # unchosen: falls back to plexId
+    assert seerr_plex[10] is None

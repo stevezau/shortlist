@@ -17,6 +17,8 @@ Two consequences worth knowing before reading the code:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import httpx
 from loguru import logger
 
@@ -134,6 +136,7 @@ class SeerrClient:
     #: ever — 500k rows is far past any real library, so reaching it means paging is broken.
     _PAGE_SIZE = 1000
     _MAX_PAGES = 500
+    _RECENT_MAX_PAGES = 10
 
     def __init__(
         self,
@@ -284,6 +287,41 @@ class SeerrClient:
         """
         rows = self._paged("/request", filter="all", sort="added", strict=True)
         return [r for r in rows if isinstance(r, dict)]
+
+    def recently_completed(self, since: datetime) -> list[dict]:
+        """Completed requests modified at or after ``since``, newest first, as Seerr serialises them.
+
+        ``filter=completed`` is request status COMPLETED (Seerr also counts DELETED media), and
+        ``sort=modified`` orders by ``updatedAt`` descending (seerr ``server/routes/request.ts``), so the
+        walk stops at the first row older than ``since`` instead of reading the whole history.
+
+        Args:
+            since: Timezone-aware lower bound on ``updatedAt``.
+
+        Raises:
+            SeerrError: The instance is unreachable or a page has the wrong shape.
+        """
+        # Imported here: requests_row imports this module, so a top-level import would close the cycle.
+        from shortlist.engine.requests_row import _iso
+
+        out: list[dict] = []
+        for _page in range(self._RECENT_MAX_PAGES):
+            payload = self._get(
+                "/request", take=self._PAGE_SIZE, skip=_page * self._PAGE_SIZE, filter="completed", sort="modified"
+            )
+            self._require_page("/request", payload)
+            batch = payload["results"]
+            for row in batch:
+                updated = _iso(row.get("updatedAt"))
+                if updated is None:
+                    continue  # no usable date to place it by; it cannot be shown to be recent
+                if updated < since:
+                    return out
+                out.append(row)
+            if len(batch) < self._PAGE_SIZE:
+                return out
+        logger.warning("{}: recent completions hit the {}-page cap", self.app_name, self._RECENT_MAX_PAGES)
+        return out
 
     def user_plex_ids(self) -> dict[int, int | None]:
         """Seerr user id -> ``plexId`` (None for a local account never linked to Plex).

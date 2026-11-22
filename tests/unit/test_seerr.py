@@ -9,6 +9,7 @@ mediaType, mediaId, seasons, userId), not merely that a call happened.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -977,3 +978,36 @@ class TestMalformedPages:
         with respx.mock:
             respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json={"message": "x"}))
             assert _client().media_dates() == {}
+
+
+class TestRecentlyCompleted:
+    SINCE = datetime(2026, 9, 10, tzinfo=UTC)
+
+    def test_recently_completed_sends_filter_and_sort(self):
+        page = _fixture("overseerr_requests_page.json")
+        with respx.mock:
+            route = respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json=page))
+            _client().recently_completed(self.SINCE)
+        params = route.calls[0].request.url.params
+        assert params["filter"] == "completed"
+        assert params["sort"] == "modified"
+
+    def test_recently_completed_stops_at_since(self):
+        page = _fixture("overseerr_requests_page.json")
+        first = {**page, "results": page["results"][:4]}
+        second = {**page, "results": page["results"][4:]}
+        client = _client()
+        client._PAGE_SIZE = 4  # a full first page, so only `since` can end the walk
+        with respx.mock:
+            route = respx.get(f"{BASE}/request").mock(
+                side_effect=[httpx.Response(200, json=first), httpx.Response(200, json=second)]
+            )
+            got = client.recently_completed(self.SINCE)
+        assert route.call_count == 1
+        assert [r["id"] for r in got] == [753, 752, 751]
+
+    def test_recently_completed_rejects_malformed_page(self):
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json={"message": "nope"}))
+            with pytest.raises(SeerrError):
+                _client().recently_completed(self.SINCE)

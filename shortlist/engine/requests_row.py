@@ -139,6 +139,28 @@ def _iso(value: object) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def seerr_identity(
+    people: list[UserProfile], read: dict[int, int | None]
+) -> tuple[dict[int, int | None], dict[int, int | None]]:
+    """Resolve Overseerr user ids to Plex account ids; the one place a requester becomes a person.
+
+    Args:
+        people: The roster.
+        read: Overseerr user id -> ``plexId`` as Overseerr reports it (empty when it could not be read).
+
+    Returns:
+        ``(seerr_plex, chosen)``: ``chosen`` holds the accounts the owner picked per person, and
+        ``seerr_plex`` is ``read`` overlaid by ``chosen``, so a chosen account beats ``plexId``.
+    """
+    # An account two people claim maps to nobody: the database forbids that, but a wrong guess here
+    # would put one person's requests in another's row.
+    chosen: dict[int, int | None] = {}
+    for p in people:
+        if p.seerr_user_id:
+            chosen[p.seerr_user_id] = None if p.seerr_user_id in chosen else p.plex_account_id
+    return {**read, **chosen}, chosen
+
+
 def collect_requests(
     sources: RequestSources,
     people: list[UserProfile],
@@ -166,13 +188,7 @@ def collect_requests(
     """
     ledger = RequestLedger(titles=[], complete=True)
     by_plex = {p.plex_account_id: p for p in people}
-    # Overseerr user id -> the person the owner chose for it. An account two people claim maps to nobody:
-    # the database forbids that, but a wrong guess here would put one person's requests in another's row.
-    chosen: dict[int, int | None] = {}
-    for p in people:
-        if p.seerr_user_id:
-            chosen[p.seerr_user_id] = None if p.seerr_user_id in chosen else p.plex_account_id
-    seerr_plex: dict[int, int | None] = dict(chosen)
+    seerr_plex, chosen = seerr_identity(people, {})
     seerr_client = seerr or (SeerrClient(sources.overseerr) if sources.overseerr else None)
     # (media, tmdb id, person) -> pattern -> title. Pattern "" holds in every requests row the person
     # has; any other only in the rows using that pattern.
@@ -215,7 +231,7 @@ def collect_requests(
     if seerr_client is not None:
         try:
             read = seerr_client.user_plex_ids()
-            seerr_plex = {**read, **chosen}
+            seerr_plex, chosen = seerr_identity(people, read)
             # Only accounts Overseerr still has: a chosen one since deleted keeps crediting its tags, but
             # "linked" would contradict the picker, which says the account is gone.
             ledger.seerr_plex_ids = {pid for uid, pid in seerr_plex.items() if pid is not None and uid in read}
@@ -240,7 +256,7 @@ def collect_requests(
             ledger.seerr_requesters = len(requesters)
             ledger.seerr_linked = len({u for u in requesters if seerr_plex.get(u) in by_plex})
             for r in rows:
-                t = _from_seerr_request(r, seerr_plex, chosen, by_plex, sources.exclude_seerr_user_id)
+                t = seerr_request_title(r, seerr_plex, chosen, by_plex, sources.exclude_seerr_user_id)
                 if t is not None:
                     add(t)
         except Exception as e:
@@ -333,7 +349,7 @@ def _merge_tag_matches(matches: list[TagMatch]) -> list[TagMatch]:
     return list(by_key.values())
 
 
-def _from_seerr_request(
+def seerr_request_title(
     r: dict,
     seerr_plex: dict[int, int | None],
     chosen: dict[int, int | None],
