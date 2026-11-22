@@ -331,7 +331,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "requests",
   ],
   popular: ["min_watchers"],
-  requests: ["requests_window_days", "requests_sources", "requests_tag_pattern"],
+  requests: ["requests_window_days", "requests_early_refresh", "requests_sources", "requests_tag_pattern"],
 };
 
 function expected(
