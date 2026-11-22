@@ -2911,7 +2911,7 @@ update costs about as much as a scheduled run of that row for those people, so t
 starts while another run is queued or running, and is skipped when the row's own schedule is about to
 fire.
 
-A request gets one early update. If the run finds the title not on Plex yet, or its season not landed,
+A request is normally handled by one early update. If the run finds the title not on Plex yet, or its season not landed,
 it tries again in a later batch, up to 3 early runs within 24 hours, and then the row's schedule picks
 it up. A title the row leaves out on purpose (already watched, hidden by their Plex restrictions, row
 full) is not retried. Requests made only through your own Radarr/Sonarr tags, and shows whose seasons
@@ -3918,7 +3918,7 @@ writing one, putting the job back on the built-in cron `GET /api/schedule` repor
 `default_cron`, and the live APScheduler trigger is rebuilt in the same request, not at the next
 restart. It is the only way back for `sync.check_cron`, where a stored `""` means OFF rather than
 "inherit"; writing the default expression itself would pin a copy of today's value instead. For the
-other eight, `null` and `""` land in the same place, because a blank already means "inherit".
+other seven, `null` and `""` land in the same place, because a blank already means "inherit".
 
 Candidate sources are set globally (`candidates.sources`) and can be overridden per row
 (`collections.candidate_sources`, `[]` = inherit the global set; valid values: `tmdb_similar`,

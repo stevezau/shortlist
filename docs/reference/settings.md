@@ -251,7 +251,7 @@ writing one, putting the job back on the built-in cron `GET /api/schedule` repor
 `default_cron`, and the live APScheduler trigger is rebuilt in the same request, not at the next
 restart. It is the only way back for `sync.check_cron`, where a stored `""` means OFF rather than
 "inherit"; writing the default expression itself would pin a copy of today's value instead. For the
-other eight, `null` and `""` land in the same place, because a blank already means "inherit".
+other seven, `null` and `""` land in the same place, because a blank already means "inherit".
 
 Candidate sources are set globally (`candidates.sources`) and can be overridden per row
 (`collections.candidate_sources`, `[]` = inherit the global set; valid values: `tmdb_similar`,

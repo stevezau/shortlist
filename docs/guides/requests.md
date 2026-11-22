@@ -505,7 +505,7 @@ update costs about as much as a scheduled run of that row for those people, so t
 starts while another run is queued or running, and is skipped when the row's own schedule is about to
 fire.
 
-A request gets one early update. If the run finds the title not on Plex yet, or its season not landed,
+A request is normally handled by one early update. If the run finds the title not on Plex yet, or its season not landed,
 it tries again in a later batch, up to 3 early runs within 24 hours, and then the row's schedule picks
 it up. A title the row leaves out on purpose (already watched, hidden by their Plex restrictions, row
 full) is not retried. Requests made only through your own Radarr/Sonarr tags, and shows whose seasons
