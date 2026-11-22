@@ -1093,12 +1093,11 @@ class TestRepeatedHourOnTheAutumnClockChange:
 class TestRequestLandingsJob:
     """The poll behind "update my requests row soon after a request lands" (#191)."""
 
-    def test_it_is_registered_at_the_default_cron(self, app: SimpleNamespace) -> None:
-        from shortlist.server.scheduler import DEFAULT_CRONS, REQUEST_LANDINGS_JOB_ID, build_scheduler, crontab_trigger
+    def test_it_is_registered_every_five_minutes(self, app: SimpleNamespace) -> None:
+        from shortlist.server.scheduler import REQUEST_LANDINGS_JOB_ID, build_scheduler, crontab_trigger
 
         job = build_scheduler(app).get_job(REQUEST_LANDINGS_JOB_ID)
 
-        assert DEFAULT_CRONS["requests.landed_poll_cron"] == "*/5 * * * *"
         assert job is not None
         assert str(job.trigger) == str(crontab_trigger("*/5 * * * *"))
         assert job.max_instances == 1
@@ -1110,33 +1109,6 @@ class TestRequestLandingsJob:
             fires.append(when.minute)
             when = when + timedelta(seconds=1)
         assert fires == [5, 10, 15]
-
-    def test_it_follows_the_setting_after_a_rebuild(self, app: SimpleNamespace) -> None:
-        from shortlist.server.scheduler import (
-            REQUEST_LANDINGS_JOB_ID,
-            build_scheduler,
-            crontab_trigger,
-            rebuild_schedule,
-        )
-        from shortlist.server.settings_store import SettingsStore
-
-        app.state.scheduler = build_scheduler(app)
-        with app.state.sessions() as session:
-            SettingsStore(session).set("requests.landed_poll_cron", "*/15 * * * *")
-
-        async def rebuild_started() -> object:
-            # A scheduler that is not started keeps a re-added job as a second pending one, so start it paused.
-            app.state.scheduler.start(paused=True)
-            try:
-                rebuild_schedule(app)
-                return app.state.scheduler.get_job(REQUEST_LANDINGS_JOB_ID)
-            finally:
-                app.state.scheduler.shutdown(wait=False)
-
-        job = asyncio.run(rebuild_started())
-
-        assert job is not None
-        assert str(job.trigger) == str(crontab_trigger("*/15 * * * *"))
 
     def test_a_fire_runs_the_tick(self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
         from shortlist.server.scheduler import REQUEST_LANDINGS_JOB_ID, build_scheduler
@@ -1171,15 +1143,3 @@ class TestRequestLandingsJob:
 
         assert tick.await_count == 1
         assert any("request-landings poll failed" in m for m in messages)
-
-    def test_the_min_gap_defaults_to_an_hour_and_is_bounded(self) -> None:
-        from shortlist.server.services.settings_validation import VALIDATORS
-        from shortlist.server.settings_store import DEFAULTS
-
-        check = VALIDATORS["requests.landed_min_gap_min"]
-        assert DEFAULTS["requests.landed_min_gap_min"] == 60
-        assert check(60) is None
-        assert check(15) is None
-        assert check(1440) is None
-        assert check(10) is not None
-        assert check(1441) is not None

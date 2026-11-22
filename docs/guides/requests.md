@@ -500,9 +500,8 @@ switch, on by default (existing requests rows got it on when you upgraded). Ever
 asks Overseerr which requests completed in the last 24 hours, matches each requester to a person the
 same way the row does, and runs that row for just those people (**Runs** shows it as **A request
 landed**). It waits until nothing new has arrived for 10 minutes, but never more than 30. Each early
-update costs about as much as a scheduled run of that row for those people, so there is a limit,
-**Early update limit (minutes)**: at most one early update per hour by default (15 to 1440). It never
-starts while another run is queued or running, and is skipped when the row's own schedule is about to
+update costs about as much as a scheduled run of that row for those people, so there is a fixed limit:
+at most one early update an hour. It never starts while another run is queued or running, and is skipped when the row's own schedule is about to
 fire.
 
 A request is normally handled by one early update. If the run finds the title not on Plex yet, or its season not landed,

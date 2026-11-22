@@ -11,7 +11,7 @@ All notable changes to this project are documented here. This project follows
 - **A "Your requests" row updates soon after a request lands** ([#191](https://github.com/stevezau/shortlist/issues/191)).
   Every 5 minutes Shortlist checks Overseerr for requests completed in the last 24 hours and runs that
   person's requests row, instead of waiting for the row's schedule. Updates are batched and limited to one
-  per hour by default (**Early update limit (minutes)**, 15 to 1440). The new **Update as soon as a request
+  an hour. The new **Update as soon as a request
   lands** switch on each requests row is on by default, including existing requests rows after you upgrade.
   Requests made only through your own Radarr/Sonarr tags still wait for the schedule. Adds migration 0116.
 

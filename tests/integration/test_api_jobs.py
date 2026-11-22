@@ -963,4 +963,4 @@ class TestRoutineJobsCanBeExcluded:
         job kind from the operator's feed by accident — the feed exists to say something happened."""
         from shortlist.server.services import jobs as jobs_service
 
-        assert jobs_service.routine_kinds() == ("watch.reconcile", "requests.landed")
+        assert jobs_service.routine_kinds() == ("watch.reconcile",)

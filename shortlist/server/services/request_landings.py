@@ -24,21 +24,20 @@ from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import crontab_trigger
 from shortlist.server.services.audit import add_audit
 from shortlist.server.services.theme_rotation import rotating_users, row_media
-from shortlist.server.settings_store import SettingsStore
 
 #: A request must sit this long before a run starts, so a burst of completions becomes one run.
 SETTLE_MIN = 10
 #: ...but never wait longer than this for the oldest one, however steady the trickle.
 MAX_WAIT_MIN = 30
 LOOKBACK = timedelta(hours=24)
+#: At most one early run per this long, so a steady trickle of requests cannot become a run every few minutes.
+MIN_GAP = timedelta(minutes=60)
 #: Early runs spent on one (request, row, person) before giving up and leaving it to the nightly run.
 MAX_EARLY_RUNS = 3
 #: Verdicts that say "not there yet", so a later run may still add the title.
 WAITING_VERDICTS = frozenset({"not_on_plex", "season_not_landed"})
 
 _TRIGGER = "request_landed"
-_MIN_GAP_KEY = "requests.landed_min_gap_min"
-_DEFAULT_MIN_GAP_MIN = 60
 _BUSY = ("queued", "running")
 
 
@@ -217,12 +216,11 @@ def should_start(session: Session, owed: list[Owed], now: datetime, min_gap: tim
     return not (schedules and all(_fires_within(cron or "", now, min_gap) for cron in schedules))
 
 
-def _owed_if_due(sessions, secrets, completed, sources, people, db_ids, read, now: datetime) -> list[Owed]:
+def _owed_if_due(sessions, completed, sources, people, db_ids, read, now: datetime) -> list[Owed]:
     """The owed entries when the gate says to start a run now, else an empty list. Sync: it is all database work."""
     with sessions() as session:
         owed = still_owed(session, landings(session, completed, sources, people, db_ids, read))
-        min_gap = timedelta(minutes=SettingsStore(session, secrets).get(_MIN_GAP_KEY, _DEFAULT_MIN_GAP_MIN))
-        return owed if should_start(session, owed, now, min_gap) else []
+        return owed if should_start(session, owed, now, MIN_GAP) else []
 
 
 async def tick(app) -> None:
@@ -244,9 +242,7 @@ async def tick(app) -> None:
     except Exception as e:
         logger.warning("requests row: could not read recent Overseerr completions ({})", e)
         return
-    owed = await asyncio.to_thread(
-        _owed_if_due, sessions, app.state.secrets, completed, sources, people, db_ids, read, now
-    )
+    owed = await asyncio.to_thread(_owed_if_due, sessions, completed, sources, people, db_ids, read, now)
     if not owed:
         return
     user_ids = sorted({o.user_id for o in owed})

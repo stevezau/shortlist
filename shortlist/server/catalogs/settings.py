@@ -1034,13 +1034,6 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
         SettingGroup.SYSTEM,
     ),
     _setting(
-        "requests.landed_min_gap_min",
-        "Early update limit (minutes)",
-        "At most one early requests-row update per this many minutes.",
-        SettingGroup.SCHEDULES,
-        range=NumericRange(minimum=15, maximum=1440, unit="minutes"),
-    ),
-    _setting(
         "jobs.max_parallel_readonly",
         "Parallel read-only jobs",
         "Maximum read-only jobs that may run together; Plex-writing jobs always remain exclusive.",
@@ -1147,15 +1140,6 @@ _CRON_DETAILS: dict[str, tuple[str, str, tuple[EffectReference, ...], tuple[Capa
         "Seasonal visibility schedule",
         "Cron schedule for showing and hiding owned seasonal Plex rows as their windows open and close.",
         (LOCAL, _effect(Effect.PLEX_WRITE, EffectTiming.RECURRING, "Can change visibility of owned seasonal rows.")),
-        (Capability.SCHEDULES_WRITE,),
-    ),
-    "requests.landed_poll_cron": (
-        "Early requests-row updates",
-        "How often Shortlist checks Overseerr for requests that just landed.",
-        (
-            LOCAL,
-            _effect(Effect.PLEX_WRITE, EffectTiming.RECURRING, "Can start a requests-row run when a request lands."),
-        ),
         (Capability.SCHEDULES_WRITE,),
     ),
     "sync.check_cron": (

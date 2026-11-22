@@ -361,21 +361,6 @@ CATALOG: tuple[JobKind, ...] = (
         trigger="Runs at midnight, and whenever you change which days or seasons a row appears in.",
     ),
     JobKind(
-        kind="requests.landed",
-        label="Early requests-row updates",
-        description=(
-            'Checks Overseerr for requests that just landed, and updates the requester\'s "Your requests" row '
-            "without waiting for its schedule. Several arrivals close together go in one update, at most once "
-            "per the early update limit."
-        ),
-        manual=False,
-        writes_plex=False,
-        routine=True,
-        schedule_job_id="request-landings",
-        schedule_setting="requests.landed_poll_cron",
-        trigger="Runs every few minutes while a requests row has early updates on.",
-    ),
-    JobKind(
         kind="user.restore",
         label="Put an un-paused person's rows back",
         description=(
@@ -1541,17 +1526,6 @@ def _watch_reconcile(state, payload: dict) -> dict:
         invalidate_report_cache()
         state.bus.publish("sync.finished", {"kind": "credited", "ok": True, "count": changed})
     return {"users_credited": changed}
-
-
-@handler("requests.landed")
-async def _requests_landed(state, payload: dict) -> dict:
-    """No-op: the scheduler calls `request_landings.tick` directly, and it owns this kind.
-
-    The kind stays a registered handler like every catalogue entry. Running `tick` from here could start a
-    Plex-writing run from a kind that declares writes_plex=False, and race the scheduled tick.
-    """
-    logger.debug("requests.landed: the scheduler owns this kind; nothing to do")
-    return {}
 
 
 @handler("themes.rotate")

@@ -68,9 +68,6 @@ DEFAULT_CRONS: dict[str, str] = {
     # turned over at 00:17 would be wrong for the first seventeen minutes of every day it owns, and
     # a Sunday row would linger into Monday — the thing the screen promises is the calendar day.
     "rows.visibility_cron": "0 0 * * *",
-    # Every 5 minutes. Only READS Overseerr; it starts an ordinary requests-row run when a request has landed
-    # on Plex and settled (#191), so a person need not wait for the nightly run.
-    "requests.landed_poll_cron": "*/5 * * * *",
     # 05:45 — after the rows build (03:30), the syncs, and the 05:30 privacy pass, so it checks the
     # state those actually left behind. Still turn-off-able: clearing the box stores "" and
     # `blank_means_off` keeps it off rather than falling back to this.
@@ -403,10 +400,11 @@ def _register_row_visibility(scheduler: AsyncIOScheduler, app) -> None:
 def _register_request_landings(scheduler: AsyncIOScheduler, app) -> None:
     """Poll Overseerr for requests that just landed and start a requests-row run for them (#191).
 
-    The poll only reads; `tick` decides whether a run is owed. A failed tick is logged and not retried,
-    because the next tick is the retry. `max_instances=1` keeps a slow tick from overlapping the next.
+    Every 5 minutes, fixed: it follows no setting (the per-row switch is the only control), so it is registered
+    once in `build_scheduler` and a rebuild leaves it alone. The poll only reads; `tick` decides whether a run
+    is owed. A failed tick is logged and not retried, because the next tick is the retry. `max_instances=1`
+    keeps a slow tick from overlapping the next.
     """
-    cron = _resolve_cron(app, "requests.landed_poll_cron", DEFAULT_CRONS["requests.landed_poll_cron"])
 
     async def fire() -> None:
         # Imported here: `request_landings` imports this module for `crontab_trigger`.
@@ -417,7 +415,9 @@ def _register_request_landings(scheduler: AsyncIOScheduler, app) -> None:
         except Exception:
             logger.exception("request-landings poll failed; the next tick will try again")
 
-    scheduler.add_job(fire, crontab_trigger(cron), id=REQUEST_LANDINGS_JOB_ID, replace_existing=True, max_instances=1)
+    scheduler.add_job(
+        fire, crontab_trigger("*/5 * * * *"), id=REQUEST_LANDINGS_JOB_ID, replace_existing=True, max_instances=1
+    )
 
 
 def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
@@ -570,7 +570,6 @@ def _register_settings_driven_jobs(scheduler: AsyncIOScheduler, app) -> None:
     _register_backup(scheduler, app)
     _register_privacy_sync(scheduler, app)
     _register_row_visibility(scheduler, app)
-    _register_request_landings(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
     _register_theme_rotation(scheduler, app)
@@ -586,6 +585,7 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register(scheduler, app, groups)
     _register_settings_driven_jobs(scheduler, app)
     _register_jobs_worker(scheduler, app)
+    _register_request_landings(scheduler, app)
     logger.info(
         "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + row-visibility "
         "+ prune{} + job worker",

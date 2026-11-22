@@ -71,16 +71,6 @@ def _job(sessions, job_id: int) -> Job:
         return session.get(Job, job_id)
 
 
-class TestRequestsLandedHandler:
-    def test_the_handler_leaves_the_poll_to_the_scheduler(self, monkeypatch):
-        from shortlist.server.services import request_landings
-
-        ticked = MagicMock()
-        monkeypatch.setattr(request_landings, "tick", ticked)
-        assert asyncio.run(jobs._HANDLERS["requests.landed"](SimpleNamespace(), {})) == {}
-        ticked.assert_not_called()
-
-
 class TestEnqueue:
     def test_an_unknown_kind_is_refused_at_enqueue_time(self, sessions):
         """Better to fail at the call site than to queue something nothing can ever run."""
@@ -560,7 +550,6 @@ class TestHandlers:
             scheduler.MAINTENANCE_PRUNE_JOB_ID,
             scheduler.ROW_VISIBILITY_JOB_ID,
             scheduler.THEMES_ROTATE_JOB_ID,
-            scheduler.REQUEST_LANDINGS_JOB_ID,
         }
         scheduled = {e.schedule_job_id for e in jobs.CATALOG if e.schedule_job_id}
         assert scheduled == ids
@@ -603,8 +592,6 @@ class TestHandlers:
             "assistant.run",
             "assistant.generate_theme",
             "assistant.request_send",
-            # Polls Overseerr and may start an ordinary run, which takes its own Plex lock (#191).
-            "requests.landed",
         }
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers
