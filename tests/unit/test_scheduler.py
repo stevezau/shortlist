@@ -1159,10 +1159,18 @@ class TestRequestLandingsJob:
         tick = AsyncMock(side_effect=RuntimeError("overseerr down"))
         monkeypatch.setattr(request_landings, "tick", tick)
 
+        from loguru import logger
+
+        messages: list[str] = []
+        sink = logger.add(lambda m: messages.append(m.record["message"]), level="ERROR")
         job = build_scheduler(app).get_job(REQUEST_LANDINGS_JOB_ID)
-        asyncio.run(job.func())
+        try:
+            asyncio.run(job.func())
+        finally:
+            logger.remove(sink)
 
         assert tick.await_count == 1
+        assert any("request-landings poll failed" in m for m in messages)
 
     def test_the_min_gap_defaults_to_an_hour_and_is_bounded(self) -> None:
         from shortlist.server.services.settings_validation import VALIDATORS

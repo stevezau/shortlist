@@ -550,6 +550,7 @@ class TestHandlers:
             scheduler.MAINTENANCE_PRUNE_JOB_ID,
             scheduler.ROW_VISIBILITY_JOB_ID,
             scheduler.THEMES_ROTATE_JOB_ID,
+            scheduler.REQUEST_LANDINGS_JOB_ID,
         }
         scheduled = {e.schedule_job_id for e in jobs.CATALOG if e.schedule_job_id}
         assert scheduled == ids
@@ -592,6 +593,8 @@ class TestHandlers:
             "assistant.run",
             "assistant.generate_theme",
             "assistant.request_send",
+            # Polls Overseerr and may start an ordinary run, which takes its own Plex lock (#191).
+            "requests.landed",
         }
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers
