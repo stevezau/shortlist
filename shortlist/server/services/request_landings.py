@@ -20,6 +20,7 @@ from shortlist.engine.clients.seerr import SeerrClient
 from shortlist.engine.models import RequestSources, UserProfile
 from shortlist.engine.requests_row import _iso, seerr_identity, seerr_request_title
 from shortlist.server.db.models import Collection, Run, RunUser, User
+from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import crontab_trigger
 from shortlist.server.services.audit import add_audit
 from shortlist.server.services.theme_rotation import rotating_users, row_media
@@ -127,7 +128,9 @@ def _still_waiting(trace: dict | None, row_slug: str, tmdb_id: int) -> bool:
 def still_owed(session: Session, owed: list[Owed]) -> list[Owed]:
     """The entries no run has dealt with yet, judged from the runs table alone.
 
-    A run covers an entry when it started after the request completed and named both the row and the person.
+    A run covers an entry when it matches this instance's mode (safe mode runs are all dry, live mode's are real,
+    so an owner's manual dry run settles nothing), started after the request completed and named both
+    the row and the person.
     An entry is settled by a covering run that is still in flight, that failed (an early run only; the nightly
     one will try again), that left the title out for a reason that will not change, or by `MAX_EARLY_RUNS`
     early runs having already tried.
@@ -136,15 +139,17 @@ def still_owed(session: Session, owed: list[Owed]) -> list[Owed]:
         return []
     row_slugs = {i: slug for i, slug in session.execute(select(Collection.id, Collection.slug))}
     user_slugs = {i: slug for i, slug in session.execute(select(User.id, User.slug))}
-    since = min(o.completed_at for o in owed)
+    # `runs.started_at` is stored as naive UTC, so compare like with like.
+    naive_since = min(o.completed_at for o in owed).astimezone(UTC).replace(tzinfo=None)
     runs = [
         (
             run,
             {x["slug"] for x in run.stats.get("expected_rows", [])},
             {x["slug"] for x in run.stats.get("expected_users", [])},
         )
-        for run in session.scalars(select(Run).where(Run.dry_run.is_(False)).order_by(Run.started_at))
-        if _utc(run.started_at) > since
+        for run in session.scalars(
+            select(Run).where(Run.dry_run.is_(force_dry_run()), Run.started_at > naive_since).order_by(Run.started_at)
+        )
     ]
     traces: dict[tuple[int, int], dict | None] = {}
 
@@ -179,11 +184,11 @@ def still_owed(session: Session, owed: list[Owed]) -> list[Owed]:
 
 def _fires_within(cron: str, now: datetime, span: timedelta) -> bool:
     """Whether a row's own cron next fires inside ``span``; a blank or invalid cron never does."""
+    if not cron.strip():
+        return False
     try:
         trigger = crontab_trigger(cron)
     except ValueError:
-        return False
-    if not cron.strip():
         return False
     local = now.astimezone()
     nxt = trigger.get_next_fire_time(None, local)

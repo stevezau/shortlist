@@ -296,12 +296,40 @@ class TestStillOwed:
         with sessions() as s:
             assert still_owed(s, [owed(timedelta(minutes=20), row=row, user=u0)]) == []
 
-    def test_dry_run_does_not_cover(self, sessions):
+    def test_dry_run_does_not_cover_in_live_mode(self, sessions, monkeypatch):
+        monkeypatch.setattr(request_landings, "force_dry_run", lambda: False)
         row, (u0,) = seed(sessions)
         add_run(sessions, started=NOW - timedelta(minutes=5), dry_run=True, verdicts={"u0": {603: "in_row"}})
         item = owed(timedelta(minutes=20), row=row, user=u0)
         with sessions() as s:
             assert still_owed(s, [item]) == [item]
+
+    def test_safe_mode_dry_runs_settle_and_cap(self, sessions, monkeypatch):
+        monkeypatch.setattr(request_landings, "force_dry_run", lambda: True)
+        row, (u0,) = seed(sessions)
+        item = owed(timedelta(hours=5), row=row, user=u0)
+        for n in range(MAX_EARLY_RUNS):
+            with sessions() as s:
+                assert still_owed(s, [item]) == [item], n
+            add_run(
+                sessions,
+                started=NOW - timedelta(hours=4, minutes=-n * 30),
+                dry_run=True,
+                verdicts={"u0": {603: "not_on_plex"}},
+            )
+        with sessions() as s:
+            assert still_owed(s, [item]) == []
+        # a real run is not what this instance is making, so it covers nothing
+        with sessions() as s:
+            s.query(Run).delete()
+            s.query(RunUser).delete()
+            s.commit()
+        add_run(sessions, started=NOW - timedelta(minutes=5), verdicts={"u0": {603: "watched"}})
+        with sessions() as s:
+            assert still_owed(s, [item]) == [item]
+        add_run(sessions, started=NOW - timedelta(minutes=4), dry_run=True, verdicts={"u0": {603: "watched"}})
+        with sessions() as s:
+            assert still_owed(s, [item]) == []
 
 
 class FakeSeerr:
