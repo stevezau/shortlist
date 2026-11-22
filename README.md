@@ -158,7 +158,8 @@ but nobody pictured here watched anything.</sub>
   one-click approval. Genres and TMDB tags you pick (concert films, say) never auto-send.
 - 📬 **A "Your requests" row.** What each person asked for in Overseerr (or tagged with their name in
   Radarr/Sonarr), once it's on Plex and until they've watched it. Private per person, newest first,
-  no AI. A person with nothing ready simply has no row.
+  no AI. A person with nothing ready simply has no row. Updates within minutes of a request landing,
+  not just overnight.
 
 **Trust and safety**
 

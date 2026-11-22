@@ -49,6 +49,11 @@ These jobs are worth knowing about there:
 - **Pick new row themes** runs daily at 01:30 by default (`themes.rotate_cron`). It gives each person
   on an AI row set to Explore their next theme, and changes nothing on Plex. Like **Check and fix rows
   on Plex**, its frequency picker offers **Off**. See [AI and cost](ai.md).
+- **Early requests-row updates** checks Overseerr every 5 minutes by default
+  (`requests.landed_poll_cron`) for requests that just landed on Plex, and starts the normal run of
+  that person's **Your requests** row. It reads Overseerr and writes nothing itself. At most one early
+  update starts per `requests.landed_min_gap_min` minutes (default 60). See
+  [Your requests rows](requests.md#your-requests-rows).
 
 **Every row runs on its own schedule**. There is no single server-wide one. Open a row (Rows → edit)
 and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for

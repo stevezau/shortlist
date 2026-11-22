@@ -495,6 +495,23 @@ step listing every request and where it ended up: in the row, not on Plex yet, t
 landed, already watched, landed more than N days ago, hidden by their Plex restrictions, or past the
 row size.
 
+**Updating as soon as a request lands.** Each requests row has an **Update as soon as a request lands**
+switch, on by default (existing requests rows got it on when you upgraded). Every 5 minutes Shortlist
+asks Overseerr which requests completed in the last 24 hours, matches each requester to a person the
+same way the row does, and runs that row for just those people (**Runs** shows it as **A request
+landed**). It waits until nothing new has arrived for 10 minutes, but never more than 30. Each early
+update costs about as much as a scheduled run of that row for those people, so there is a limit,
+**Early update limit (minutes)**: at most one early update per hour by default (15 to 1440). It never
+starts while another run is queued or running, and is skipped when the row's own schedule is about to
+fire.
+
+A request gets one early update. If the run finds the title not on Plex yet, or its season not landed,
+it tries again in a later batch, up to 3 early runs within 24 hours, and then the row's schedule picks
+it up. A title the row leaves out on purpose (already watched, hidden by their Plex restrictions, row
+full) is not retried. Requests made only through your own Radarr/Sonarr tags, and shows whose seasons
+land one at a time (Overseerr completes the request only when every requested season has landed), wait
+for the row's schedule. In safe mode early runs are dry runs like every other run.
+
 A requests row is private the same way every per-person row is — see
 [How rows stay private](../reference/concepts.md#how-rows-stay-private). Because the row disappears
 when a person has nothing ready, each run costs one collections listing per library per person with
