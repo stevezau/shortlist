@@ -143,11 +143,12 @@ def still_owed(session: Session, owed: list[Owed]) -> list[Owed]:
     user_slugs = {i: slug for i, slug in session.execute(select(User.id, User.slug))}
     # `runs.started_at` is stored as naive UTC, so compare like with like.
     naive_since = min(o.completed_at for o in owed).astimezone(UTC).replace(tzinfo=None)
+    # A run with no `scope` (queued before it existed) covers nothing.
     runs = [
         (
             run,
-            {x["slug"] for x in run.stats.get("expected_rows", [])},
-            {x["slug"] for x in run.stats.get("expected_users", [])},
+            set((run.stats.get("scope") or {}).get("row_slugs", [])),
+            set((run.stats.get("scope") or {}).get("user_slugs", [])),
         )
         for run in session.scalars(
             select(Run).where(Run.dry_run.is_(force_dry_run()), Run.started_at > naive_since).order_by(Run.started_at)

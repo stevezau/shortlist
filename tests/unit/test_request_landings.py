@@ -106,7 +106,7 @@ def add_run(
             started_at=started,
             status=status,
             dry_run=dry_run,
-            stats={"expected_users": [{"slug": u} for u in users], "expected_rows": [{"slug": r} for r in rows]},
+            stats={"scope": {"user_slugs": list(users), "row_slugs": list(rows)}},
         )
         s.add(run)
         s.flush()
@@ -453,3 +453,47 @@ class TestTick:
         service = FakeRunService(profiles(), {101: 1}, sources=RequestSources())
         asyncio.run(tick(make_app(sessions, service)))
         assert seerr.calls == 0
+
+
+class TestARunBuiltTheWayProductionBuildsIt:
+    """Queued by the real `queue_run_in_session`, finished by the real `_finalize_run`.
+
+    Hand-written stats once encoded `expected_*` as the contract, but `_finalize_run` drops those keys, so no
+    finished run ever settled anything (#191).
+    """
+
+    def test_a_finished_early_run_with_an_in_row_verdict_settles_the_request(self, sessions, tmp_path):
+        from shortlist.engine.models import RunReport
+        from shortlist.server.services.run_persistence import _finalize_run
+        from shortlist.server.services.run_service import RunService
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.services.sse import EventBus
+
+        row, (u0,) = seed(sessions)
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
+        completed = datetime.now(UTC) - timedelta(minutes=20)
+        item = Owed(1, 603, MediaType.MOVIE, completed, row, u0)
+        with sessions() as s:
+            run = service.queue_run_in_session(
+                s, trigger="request_landed", dry_run=False, user_ids=[u0], collection_ids=[row]
+            )
+            run_id = run.id
+            s.commit()
+        with sessions() as s:
+            assert still_owed(s, [item]) == []
+        with sessions() as s:
+            run = s.get(Run, run_id)
+            _finalize_run(run, RunReport(started_at=datetime.now(UTC)), "ok", None, ok=1, errors=0)
+            trace = {
+                "selection": [
+                    {
+                        "row": "reqs",
+                        "requests": [{"tmdb_id": 603, "media_type": "movie", "result": "in_row"}],
+                    }
+                ]
+            }
+            s.add(RunUser(run_id=run_id, user_id=u0, status="ok", trace=trace))
+            s.commit()
+        with sessions() as s:
+            assert "expected_rows" not in s.get(Run, run_id).stats
+            assert still_owed(s, [item]) == []

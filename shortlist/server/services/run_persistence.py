@@ -1857,4 +1857,7 @@ def _finalize_run(
         stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit
     # after assignment would not reliably mark it dirty.
-    run.stats = {**{key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_")}, **stats}
+    # `scope` rides along so the early requests-row poll can tell what a finished run covered (#191);
+    # `expected_*` stay dropped, because the Runs page falls back to `run.users` once a run is done.
+    kept = {key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_") or key == "scope"}
+    run.stats = {**kept, **stats}

@@ -48,6 +48,18 @@ from shortlist.server.services.watch_sync import WatchSync
 RESUME_WITHIN = timedelta(hours=20)
 
 
+def _scope_of(stats: dict) -> dict:
+    """The (user, row) slugs a run covers, kept after the run finishes.
+
+    `expected_*` are dropped when a run is finalized (the Runs page reads them only for in-flight runs), so
+    the early-update poll (#191) reads this copy to know what a finished run covered.
+    """
+    return {
+        "user_slugs": [u["slug"] for u in stats.get("expected_users", [])],
+        "row_slugs": [r["slug"] for r in stats.get("expected_rows", [])],
+    }
+
+
 def missed_by_restart(session: Session, run: Run, now: datetime) -> tuple[list[int], list[int]] | None:
     """``(user ids, collection ids)`` a scheduled run cut short by a restart never built, or None.
 
@@ -290,6 +302,7 @@ class RunService:
                 for row in wanted.order_by(Collection.sort_order, Collection.id)
             ],
         }
+        stats["scope"] = _scope_of(stats)
         if assistant_contract is not None:
             stats["assistant_contract"] = assistant_contract
         run = Run(trigger=trigger, dry_run=dry_run, status="queued", stats=stats)
@@ -521,6 +534,7 @@ class RunService:
                             for p in profiles
                         ],
                     }
+                    run.stats = {**run.stats, "scope": _scope_of(run.stats)}
                     session.commit()
                 log_sink = self._new_run_log(run_id)
                 # In an executor: building the context makes a PMS request (up to the 45s timeout),
@@ -567,6 +581,7 @@ class RunService:
                             if ctx.config.should_build(spec)
                         ],
                     }
+                    run.stats = {**run.stats, "scope": _scope_of(run.stats)}
                     session.commit()
                 # Cooperative cancel: the engine checks this before each user and skips the rest. An
                 # in-flight user still finishes (per-user transactional), and the privacy merge +

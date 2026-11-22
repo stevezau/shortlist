@@ -644,3 +644,20 @@ class TestReconcileCommitsPerPerson:
             reconcile_watched(factory, profiles, {})
 
             assert len(commits) >= 3
+
+
+class TestFinalizeKeepsTheRunScope:
+    def test_scope_survives_finalize_but_expected_rosters_do_not(self):
+        from shortlist.engine.models import RunReport
+        from shortlist.server.db.models import Run
+        from shortlist.server.services.run_persistence import _finalize_run
+
+        scope = {"user_slugs": ["u0"], "row_slugs": ["reqs"]}
+        run = Run(
+            trigger="manual",
+            status="running",
+            stats={"scope": scope, "expected_users": [{"slug": "u0"}], "expected_rows": [{"slug": "reqs"}]},
+        )
+        _finalize_run(run, RunReport(started_at=datetime.now(UTC)), "ok", None, ok=1, errors=0)
+        assert run.stats["scope"] == scope
+        assert "expected_users" not in run.stats and "expected_rows" not in run.stats
