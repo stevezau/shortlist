@@ -141,7 +141,7 @@ class RunSummaryOut(PassthroughModel):
     id: int
     #: What started it. `assistant` is the durable MCP queue trigger; `schedule` is the APScheduler
     #: tick and `manual` is POST /runs. `wizard` and `resume` remain for documented legacy rows.
-    trigger: Literal["schedule", "manual", "wizard", "resume", "assistant"]
+    trigger: Literal["schedule", "manual", "wizard", "resume", "assistant", "request_landed"]
     #: Not optional: `runs.started_at` is NOT NULL (migration 0001) and carries an ORM-side `utcnow`
     #: default, so every run row has one. It read `str | None` only because `iso_utc` is typed that
     #: way — the serializer's signature, not this column's.

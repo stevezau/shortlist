@@ -6707,7 +6707,7 @@ export interface components {
              * Trigger
              * @enum {string}
              */
-            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant";
+            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant" | "request_landed";
             /** Users */
             users: components["schemas"]["RunUserOut"][];
             web_share?: components["schemas"]["WebShareOut"] | null;
@@ -6909,7 +6909,7 @@ export interface components {
              * Trigger
              * @enum {string}
              */
-            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant";
+            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant" | "request_landed";
         } & {
             [key: string]: unknown;
         };

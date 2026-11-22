@@ -139,6 +139,8 @@ const TRIGGER_LABELS: Record<string, string> = {
   wizard: "Setup",
   // A scheduled run a restart cut short, finished for the people it never reached.
   resume: "Resumed after a restart",
+  // A requests row refreshed soon after a request landed on Plex (#191), not on the nightly schedule.
+  request_landed: "A request landed",
 };
 
 /** A run/user status as a person reads it — never the raw enum ("cold_start" → "Cold start"). */

@@ -7870,7 +7870,8 @@
               "manual",
               "wizard",
               "resume",
-              "assistant"
+              "assistant",
+              "request_landed"
             ],
             "title": "Trigger",
             "type": "string"
@@ -8382,7 +8383,8 @@
               "manual",
               "wizard",
               "resume",
-              "assistant"
+              "assistant",
+              "request_landed"
             ],
             "title": "Trigger",
             "type": "string"

@@ -319,6 +319,7 @@ describe("triggerLabel", () => {
     ["assistant", "Assistant"],
     ["wizard", "Setup"],
     ["resume", "Resumed after a restart"],
+    ["request_landed", "A request landed"],
   ])("says %s as %s", (trigger, label) => {
     expect(triggerLabel(trigger)).toBe(label);
   });

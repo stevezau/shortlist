@@ -510,7 +510,7 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | wizard | resume | assistant
+    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | wizard | resume | assistant | request_landed
     #: When the run was QUEUED — this row is created the moment someone presses Run.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     #: When the engine actually began, which is not the same moment: a run waits here behind whatever

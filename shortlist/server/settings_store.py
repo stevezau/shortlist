@@ -111,6 +111,9 @@ DEFAULTS: dict[str, Any] = {
     # and never overlap a run — share-filter writes are read-modify-write merges, so two at once lose
     # one of them (plex-safety rule 3). Dial to 1 if a PMS complains about the concurrency.
     "jobs.max_parallel_readonly": 3,
+    # Minimum minutes between early requests-row runs (#191), so a steady trickle of requests cannot turn
+    # into a run every few minutes.
+    "requests.landed_min_gap_min": 60,
     # Notification ids the owner dismissed. Each id encodes its state (run id / version), so the same
     # alert stays hidden but a new failure or a newer release surfaces again. Capped to the newest 100.
     "notifications.dismissed": [],

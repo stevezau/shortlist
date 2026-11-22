@@ -327,6 +327,7 @@ VALIDATORS = {
     "runs.retention": _bounded_int(0, 24),  # months; 0 = keep forever
     "events.retention": _bounded_int(0, 24),  # months; 0 = keep forever (the default)
     "sync.watch_full_days": _bounded_int(1, 90),
+    "requests.landed_min_gap_min": _bounded_int(15, 1440),
     # The FLOOR (minimum seconds) between plex.tv writes. 0 = fire as fast as plex.tv accepts; the
     # client backs off adaptively on 429 (rule 6), so 0 is safe, not an "off switch" like it once was.
     "plextv.throttle_s": _bounded_float(0.0, 60.0),
