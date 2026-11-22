@@ -114,6 +114,8 @@ def _spec(template_id: str, **overrides) -> RowSpec:
     # Whether the row runs at all is the server's switch, not a recipe the engine reads (the AI template
     # ships switched off until the owner has seen its list).
     values.pop("enabled", None)
+    # Whether the server polls Overseerr for this row is the scheduler's switch, not an engine setting.
+    values.pop("requests_early_refresh", None)
 
     unsupported = [k for k in values if not hasattr(RowSpec, k) and k not in RowSpec.__annotations__]
     assert not unsupported, f"{template_id}: the engine has no setting for {unsupported}"

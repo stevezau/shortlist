@@ -4044,6 +4044,11 @@ export interface components {
              */
             request_tag: string;
             /**
+             * Requests Early Refresh
+             * @default true
+             */
+            requests_early_refresh: boolean;
+            /**
              * Requests Row
              * @default false
              */
@@ -4343,6 +4348,8 @@ export interface components {
             req_sonarr_root_folder: string | null;
             /** Request Tag */
             request_tag: string;
+            /** Requests Early Refresh */
+            requests_early_refresh: boolean;
             /** Requests Row */
             requests_row: boolean;
             /** Requests Tag Pattern */

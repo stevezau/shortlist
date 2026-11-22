@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -391,6 +392,26 @@ export function YourRequestsBlock(props: KindBlockProps) {
             Older arrivals drop off, so a request they&rsquo;ve lost interest in
             doesn&rsquo;t sit there for good. 0 keeps every title until
             they&rsquo;ve watched it.
+          </p>
+        </div>
+      )}
+
+      {props.shown.has("requests_window_days") && (
+        <div data-setting="requests_early_refresh" className="space-y-2">
+          <div className="flex items-center gap-3">
+            <Switch
+              id="row-requests-early-refresh"
+              checked={input.requests_early_refresh}
+              onCheckedChange={(checked) => set({ requests_early_refresh: checked })}
+            />
+            <Label htmlFor="row-requests-early-refresh">
+              Update as soon as a request lands
+            </Label>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Checks Overseerr every few minutes. When someone&rsquo;s request lands
+            on Plex, their row updates without waiting for the schedule. Several
+            arrivals close together go in one update, at most once an hour.
           </p>
         </div>
       )}

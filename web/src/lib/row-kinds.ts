@@ -446,6 +446,7 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   requests_row: "kind",
   requests_window_days: "requests_window_days",
   requests_tag_pattern: "requests_tag_pattern",
+  requests_early_refresh: "requests_window_days",
   unstarted_only: "unstarted_only",
   refresh_days: "refresh_days",
   idle_hold_days: "idle_hold_days",

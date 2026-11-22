@@ -30,6 +30,7 @@ export function fullCollection(patch: Partial<Collection> = {}): Collection {
     requests_row: false,
     requests_window_days: 90,
     requests_tag_pattern: "",
+    requests_early_refresh: true,
     unstarted_only: false,
     refresh_days: null,
     idle_hold_days: null,

@@ -375,6 +375,7 @@ class RowAdapter:
             "requests_row",
             "requests_window_days",
             "requests_tag_pattern",
+            "requests_early_refresh",
             "request_tag",
             "pick_order",
         }

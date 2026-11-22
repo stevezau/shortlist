@@ -1375,6 +1375,11 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_early_refresh": {
+            "default": true,
+            "title": "Requests Early Refresh",
+            "type": "boolean"
+          },
           "requests_row": {
             "default": false,
             "title": "Requests Row",
@@ -2162,6 +2167,10 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_early_refresh": {
+            "title": "Requests Early Refresh",
+            "type": "boolean"
+          },
           "requests_row": {
             "title": "Requests Row",
             "type": "boolean"
@@ -2348,6 +2357,7 @@
           "requests_row",
           "requests_window_days",
           "requests_tag_pattern",
+          "requests_early_refresh",
           "unstarted_only",
           "refresh_days",
           "idle_hold_days",

@@ -86,7 +86,12 @@ ROW_CASES = {
     },
     "rewatch": {"rewatch": True, "rewatch_cooldown_days": 60},
     "unstarted": {"media": "show", "library_keys": ["2"], "unstarted_only": True},
-    "requested_titles": {"requests_row": True, "requests_window_days": 30, "requests_tag_pattern": "req-{username}"},
+    "requested_titles": {
+        "requests_row": True,
+        "requests_window_days": 30,
+        "requests_tag_pattern": "req-{username}",
+        "requests_early_refresh": False,
+    },
     "seasonal": {"seasons": ["halloween"], "season_lead_days": 20, "season_after_days": 3},
     "shared": {"build": "shared", "min_watchers": 3},
     "theme": {
@@ -179,7 +184,7 @@ def _assert_readback(wire, app, row_id, expected):
 def test_row_field_cases_cover_the_entire_advertised_writable_contract():
     covered = set(BASE) | {"name"} | set().union(*(set(case) for case in ROW_CASES.values()))
     assert covered == set(ROW_FIELD_DEFINITIONS)
-    assert len(covered) == 76
+    assert len(covered) == 77
     assert not {"id", "slug", "dry_run", "defer_rename", "poster_upload"} & covered
 
 

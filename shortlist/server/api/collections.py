@@ -201,6 +201,7 @@ class CollectionOut(PassthroughModel):
     requests_row: bool
     requests_window_days: int
     requests_tag_pattern: str
+    requests_early_refresh: bool
     unstarted_only: bool
     refresh_days: int | None
     idle_hold_days: int | None

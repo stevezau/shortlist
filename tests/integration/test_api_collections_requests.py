@@ -559,6 +559,29 @@ class TestRequestsRowFields:
         spec = next(s for s in specs if s.slug == out["slug"])
         assert (spec.requests_row, spec.requests_window_days, spec.requests_tag_pattern) == (True, 30, "req-{username}")
 
+    def test_requests_early_refresh_round_trips(self, client: TestClient):
+        body = {"name": "📬 {library_name} you asked for", "build": "per_person", "requests_row": True, "size": 20}
+        created = client.post("/api/collections", json={**body, "requests_early_refresh": True}).json()
+        assert created["requests_early_refresh"] is True
+        url = f"/api/collections/{created['id']}"
+        off = client.patch(url, json={"name": "n", "requests_early_refresh": False}).json()
+        assert off["requests_early_refresh"] is False
+        listed = {row["id"]: row for row in client.get("/api/collections").json()}
+        assert listed[created["id"]]["requests_early_refresh"] is False
+        on = client.patch(url, json={"name": "n", "requests_early_refresh": True}).json()
+        assert on["requests_early_refresh"] is True
+
+    def test_requests_early_refresh_defaults_on_for_a_requests_row(self, client: TestClient):
+        body = {"name": "n", "build": "per_person", "requests_row": True, "size": 20}
+        assert client.post("/api/collections", json=body).json()["requests_early_refresh"] is True
+
+    def test_a_non_requests_row_saves_early_refresh_off_whatever_is_sent(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "n", "requests_early_refresh": True}).json()
+        assert created["requests_early_refresh"] is False
+        url = f"/api/collections/{created['id']}"
+        patched = client.patch(url, json={"name": "n", "requests_early_refresh": True}).json()
+        assert patched["requests_early_refresh"] is False
+
     @pytest.mark.parametrize(
         ("bad", "msg"),
         [

@@ -28,6 +28,7 @@ export function generatedRowInputDefaults(): CollectionInput {
   "requests_row": false,
   "requests_window_days": 90,
   "requests_tag_pattern": "",
+  "requests_early_refresh": true,
   "unstarted_only": false,
   "refresh_days": null,
   "idle_hold_days": null,
@@ -183,6 +184,7 @@ export const GENERATED_ROW_TEMPLATES: RowTemplate[] = [
       "build": "per_person",
       "requests_row": true,
       "requests_window_days": 90,
+      "requests_early_refresh": true,
       "size": 20
     }
   },

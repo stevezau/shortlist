@@ -159,6 +159,7 @@ def create_row_in_session(session: Session, secrets, body) -> Collection:
         requests_row=body.requests_row,
         requests_window_days=body.requests_window_days,
         requests_tag_pattern=body.requests_tag_pattern.strip(),
+        requests_early_refresh=body.requests_early_refresh and body.requests_row,
         unstarted_only=body.unstarted_only,
         refresh_days=body.refresh_days,
         idle_hold_days=body.idle_hold_days,

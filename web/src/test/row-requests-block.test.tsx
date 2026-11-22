@@ -127,6 +127,19 @@ describe("YourRequestsBlock", () => {
     ).toBeInTheDocument();
   });
 
+  it("offers an early-refresh switch that writes requests_early_refresh", () => {
+    const set = renderBlock(requestsRow({ requests_early_refresh: true }));
+    const toggle = screen.getByRole("switch", { name: "Update as soon as a request lands" });
+    expect(toggle).toBeChecked();
+    expect(
+      screen.getByText(
+        "Checks Overseerr every few minutes. When someone’s request lands on Plex, their row updates without waiting for the schedule. Several arrivals close together go in one update, at most once an hour.",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(set).toHaveBeenLastCalledWith({ requests_early_refresh: false });
+  });
+
   it("writes the window back as a whole number of days, never below 0", () => {
     const set = renderBlock(requestsRow());
     const field = screen.getByLabelText("Show titles that landed in the last");

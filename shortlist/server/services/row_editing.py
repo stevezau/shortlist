@@ -332,6 +332,8 @@ class CollectionIn(StrictRequestModel):
     requests_window_days: int = Field(default=90, ge=0, le=3650)
     # How the *arrs tag a person's requests, e.g. "req-{username}"; empty -> only a person's own tag.
     requests_tag_pattern: str = Field(default="", max_length=128)
+    # Rebuild this row soon after one of its requests lands (#191); saved off for a non-requests row.
+    requests_early_refresh: bool = True
 
     # The seasons this row follows (discussion #124); [] -> not seasonal. Out of season the row is hidden,
     # and it shows from `season_lead_days` before each season's day to `season_after_days` after it.
@@ -807,6 +809,7 @@ def serialize_row(
         "requests_row": bool(collection.requests_row),
         "requests_window_days": collection.requests_window_days,
         "requests_tag_pattern": collection.requests_tag_pattern or "",
+        "requests_early_refresh": bool(collection.requests_early_refresh),
         "unstarted_only": bool(collection.unstarted_only),
         "refresh_days": collection.refresh_days,
         "idle_hold_days": collection.idle_hold_days,
@@ -1305,6 +1308,7 @@ PATCHABLE_COLUMNS = (
     "requests_row",
     "requests_window_days",
     "requests_tag_pattern",
+    "requests_early_refresh",
     "unstarted_only",
     "refresh_days",
     "idle_hold_days",
@@ -1426,6 +1430,10 @@ def apply_row_patch(
             if column == "name_template" and is_default:
                 continue
             setattr(collection, column, getattr(body, column))
+    if not collection.requests_row:
+        collection.requests_early_refresh = False  # only a requests row has requests to wait for
+    elif "requests_row" in sent and "requests_early_refresh" not in sent:
+        collection.requests_early_refresh = True  # a row turned into a requests row starts on
     if "theme_id" in sent and body.theme_id is None:
         # Without a theme the row is no longer an AI row, and these exist only on one.
         for column, default in EXPLORE_DEFAULTS.items():

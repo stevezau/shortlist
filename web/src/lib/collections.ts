@@ -62,6 +62,7 @@ export function toInput(collection: Collection): CollectionInput {
     requests_row: collection.requests_row ?? false,
     requests_window_days: collection.requests_window_days ?? 90,
     requests_tag_pattern: collection.requests_tag_pattern ?? "",
+    requests_early_refresh: collection.requests_early_refresh ?? true,
     recency: collection.recency ?? null,
     recent_count: collection.recent_count ?? null,
     favourite_count: collection.favourite_count ?? null,
