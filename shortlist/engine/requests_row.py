@@ -128,7 +128,7 @@ def pattern_matches(label: str, pattern: str, people: list[UserProfile]) -> list
     return out
 
 
-def _iso(value: object) -> datetime | None:
+def parse_iso_utc(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -300,8 +300,8 @@ def collect_requests(
             rec = media_dates.get((_SEERR_MEDIA_KIND[t.media_type], t.tmdb_id))
             if not rec:
                 continue
-            landed = _iso(rec.get("lastSeasonChange")) if t.media_type is MediaType.SHOW else None
-            landed = landed or _iso(rec.get("mediaAddedAt"))
+            landed = parse_iso_utc(rec.get("lastSeasonChange")) if t.media_type is MediaType.SHOW else None
+            landed = landed or parse_iso_utc(rec.get("mediaAddedAt"))
             if landed:
                 by_pattern[pattern] = replace(t, landed_at=landed)
 
@@ -382,14 +382,14 @@ def seerr_request_title(
     )
     landed = None
     if kind is MediaType.SHOW:
-        done = [_iso(s.get("updatedAt")) for s in seasons if s.get("status") == _REQ_COMPLETED]
-        landed = max((d for d in done if d), default=None) or _iso(media.get("lastSeasonChange"))
-    landed = landed or _iso(media.get("mediaAddedAt"))
+        done = [parse_iso_utc(s.get("updatedAt")) for s in seasons if s.get("status") == _REQ_COMPLETED]
+        landed = max((d for d in done if d), default=None) or parse_iso_utc(media.get("lastSeasonChange"))
+    landed = landed or parse_iso_utc(media.get("mediaAddedAt"))
     return RequestedTitle(
         tmdb_id=tmdb_id,
         media_type=kind,
         plex_account_id=int(plex_id),
-        requested_at=_iso(r.get("createdAt")),
+        requested_at=parse_iso_utc(r.get("createdAt")),
         landed_at=landed,
         on_disk=bool(on_disk),
         seasons_landed=bool(seasons_landed),
@@ -487,17 +487,17 @@ def _add_tagged(
                 continue
             if kind is MediaType.MOVIE:
                 on_disk = bool(item.get("hasFile"))
-                landed = _iso((item.get("movieFile") or {}).get("dateAdded"))
+                landed = parse_iso_utc((item.get("movieFile") or {}).get("dateAdded"))
             else:
                 on_disk = int((item.get("statistics") or {}).get("episodeFileCount") or 0) > 0
-                landed = _iso(item.get("added"))
+                landed = parse_iso_utc(item.get("added"))
             for pattern in row_patterns:
                 add(
                     RequestedTitle(
                         tmdb_id=tmdb_id,
                         media_type=kind,
                         plex_account_id=person.plex_account_id,
-                        requested_at=_iso(item.get("added")),
+                        requested_at=parse_iso_utc(item.get("added")),
                         landed_at=landed if on_disk else None,
                         on_disk=on_disk,
                         seasons_landed=True,

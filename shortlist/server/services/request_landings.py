@@ -17,8 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.seerr import SeerrClient
-from shortlist.engine.models import RequestSources, UserProfile
-from shortlist.engine.requests_row import _iso, seerr_identity, seerr_request_title
+from shortlist.engine.models import MediaType, RequestSources, UserProfile
+from shortlist.engine.requests_row import parse_iso_utc, seerr_identity, seerr_request_title
 from shortlist.server.db.models import Collection, Run, RunUser, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import crontab_trigger
@@ -48,6 +48,7 @@ class Owed:
 
     request_id: int
     tmdb_id: int
+    media_type: MediaType
     completed_at: datetime
     collection_id: int
     user_id: int
@@ -103,24 +104,25 @@ def landings(
     out: list[Owed] = []
     for r in completed:
         title = seerr_request_title(r, seerr_plex, chosen, by_plex, sources.exclude_seerr_user_id)
-        completed_at = _iso(r.get("updatedAt"))
+        completed_at = parse_iso_utc(r.get("updatedAt"))
         user_id = db_ids.get(title.plex_account_id) if title else None
         if title is None or completed_at is None or user_id is None or not isinstance(r.get("id"), int):
             continue
         for row, audience in rows:
             if user_id in audience and title.media_type in row_media(row):
-                out.append(Owed(r["id"], title.tmdb_id, completed_at, row.id, user_id))
+                out.append(Owed(r["id"], title.tmdb_id, title.media_type, completed_at, row.id, user_id))
     return out
 
 
-def _still_waiting(trace: dict | None, row_slug: str, tmdb_id: int) -> bool:
+def _still_waiting(trace: dict | None, row_slug: str, tmdb_id: int, media_type: MediaType) -> bool:
     """Whether the run's trace left the title out only because it was not there yet."""
     verdicts = [
         entry["result"]
         for sel in (trace or {}).get("selection", [])
         if sel.get("row") == row_slug
         for entry in sel.get("requests", [])
-        if entry.get("tmdb_id") == tmdb_id
+        # A movie and a show can share a TMDB id, so the id alone would read the other title's verdict.
+        if entry.get("tmdb_id") == tmdb_id and entry.get("media_type") == media_type.value
     ]
     return bool(verdicts) and all(v in WAITING_VERDICTS for v in verdicts)
 
@@ -173,7 +175,8 @@ def still_owed(session: Session, owed: list[Owed]) -> list[Owed]:
             or any(run.status in ("error", "aborted") for run in early)
             or len(early) >= MAX_EARLY_RUNS
             or any(
-                run.status == "ok" and not _still_waiting(trace_of(run.id, o.user_id), row_slug, o.tmdb_id)
+                run.status == "ok"
+                and not _still_waiting(trace_of(run.id, o.user_id), row_slug, o.tmdb_id, o.media_type)
                 for run in covering
             )
         )
@@ -213,6 +216,14 @@ def should_start(session: Session, owed: list[Owed], now: datetime, min_gap: tim
     return not (schedules and all(_fires_within(cron or "", now, min_gap) for cron in schedules))
 
 
+def _owed_if_due(sessions, secrets, completed, sources, people, db_ids, read, now: datetime) -> list[Owed]:
+    """The owed entries when the gate says to start a run now, else an empty list. Sync: it is all database work."""
+    with sessions() as session:
+        owed = still_owed(session, landings(session, completed, sources, people, db_ids, read))
+        min_gap = timedelta(minutes=SettingsStore(session, secrets).get(_MIN_GAP_KEY, _DEFAULT_MIN_GAP_MIN))
+        return owed if should_start(session, owed, now, min_gap) else []
+
+
 async def tick(app) -> None:
     """One poll: read recent completions, and start a run if a request is owed and the gate allows it."""
     sessions = app.state.sessions
@@ -232,11 +243,11 @@ async def tick(app) -> None:
     except Exception as e:
         logger.warning("requests row: could not read recent Overseerr completions ({})", e)
         return
-    with sessions() as session:
-        owed = still_owed(session, landings(session, completed, sources, people, db_ids, read))
-        min_gap = timedelta(minutes=SettingsStore(session, app.state.secrets).get(_MIN_GAP_KEY, _DEFAULT_MIN_GAP_MIN))
-        if not should_start(session, owed, now, min_gap):
-            return
+    owed = await asyncio.to_thread(
+        _owed_if_due, sessions, app.state.secrets, completed, sources, people, db_ids, read, now
+    )
+    if not owed:
+        return
     user_ids = sorted({o.user_id for o in owed})
     collection_ids = sorted({o.collection_id for o in owed})
     run_id = await app.state.run_service.start_run(

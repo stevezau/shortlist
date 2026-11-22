@@ -71,6 +71,16 @@ def _job(sessions, job_id: int) -> Job:
         return session.get(Job, job_id)
 
 
+class TestRequestsLandedHandler:
+    def test_the_handler_leaves_the_poll_to_the_scheduler(self, monkeypatch):
+        from shortlist.server.services import request_landings
+
+        ticked = MagicMock()
+        monkeypatch.setattr(request_landings, "tick", ticked)
+        assert asyncio.run(jobs._HANDLERS["requests.landed"](SimpleNamespace(), {})) == {}
+        ticked.assert_not_called()
+
+
 class TestEnqueue:
     def test_an_unknown_kind_is_refused_at_enqueue_time(self, sessions):
         """Better to fail at the call site than to queue something nothing can ever run."""

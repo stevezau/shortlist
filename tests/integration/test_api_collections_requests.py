@@ -582,6 +582,14 @@ class TestRequestsRowFields:
         patched = client.patch(url, json={"name": "n", "requests_early_refresh": True}).json()
         assert patched["requests_early_refresh"] is False
 
+    def test_converting_a_row_into_a_requests_row_turns_early_refresh_on(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "n"}).json()
+        assert created["requests_early_refresh"] is False
+        url = f"/api/collections/{created['id']}"
+        patched = client.patch(url, json={"name": "n", "build": "per_person", "requests_row": True}).json()
+        assert patched["requests_row"] is True
+        assert patched["requests_early_refresh"] is True
+
     @pytest.mark.parametrize(
         ("bad", "msg"),
         [

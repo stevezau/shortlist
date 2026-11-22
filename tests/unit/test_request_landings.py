@@ -9,7 +9,7 @@ from typing import ClassVar
 
 import pytest
 
-from shortlist.engine.models import RequestSources, SeerrTarget
+from shortlist.engine.models import MediaType, RequestSources, SeerrTarget
 from shortlist.server.db.models import Collection, CollectionAudience, CollectionUserOverride, Event, Run, RunUser, User
 from shortlist.server.services import request_landings
 from shortlist.server.services.request_landings import (
@@ -69,8 +69,23 @@ def request(rid: int, seerr_user: int, *, tmdb: int = 603, kind: str = "movie", 
     }
 
 
-def owed(completed_ago: timedelta, *, row: int = 1, user: int = 1, tmdb: int = 603, rid: int = 1) -> Owed:
-    return Owed(request_id=rid, tmdb_id=tmdb, completed_at=NOW - completed_ago, collection_id=row, user_id=user)
+def owed(
+    completed_ago: timedelta,
+    *,
+    row: int = 1,
+    user: int = 1,
+    tmdb: int = 603,
+    rid: int = 1,
+    media_type: MediaType = MediaType.MOVIE,
+) -> Owed:
+    return Owed(
+        request_id=rid,
+        tmdb_id=tmdb,
+        media_type=media_type,
+        completed_at=NOW - completed_ago,
+        collection_id=row,
+        user_id=user,
+    )
 
 
 def add_run(
@@ -102,7 +117,7 @@ def add_run(
                     {
                         "row": rows[0],
                         "decision": "requests",
-                        "requests": [{"tmdb_id": t, "result": r} for t, r in results.items()],
+                        "requests": [{"tmdb_id": t, "media_type": "movie", "result": r} for t, r in results.items()],
                     }
                 ]
             }
@@ -230,6 +245,22 @@ class TestStillOwed:
         add_run(sessions, started=NOW - timedelta(minutes=5), verdicts={"u0": {999: "in_row"}})
         with sessions() as s:
             assert still_owed(s, [owed(timedelta(minutes=20), row=row, user=u0)]) == []
+
+    def test_a_movie_and_a_show_sharing_a_tmdb_id_are_judged_apart(self, sessions):
+        row, (u0,) = seed(sessions)
+        run_id = add_run(sessions, started=NOW - timedelta(minutes=5), verdicts={"u0": {603: "in_row"}})
+        with sessions() as s:
+            trace = s.get(RunUser, (run_id, u0)).trace
+            trace["selection"][0]["requests"] = [
+                {"tmdb_id": 603, "media_type": "movie", "result": "in_row"},
+                {"tmdb_id": 603, "media_type": "show", "result": "not_on_plex"},
+            ]
+            s.get(RunUser, (run_id, u0)).trace = trace
+            s.commit()
+        movie = owed(timedelta(minutes=20), row=row, user=u0, media_type=MediaType.MOVIE)
+        show = owed(timedelta(minutes=20), row=row, user=u0, media_type=MediaType.SHOW)
+        with sessions() as s:
+            assert still_owed(s, [movie, show]) == [show]
 
     def test_not_on_plex_retries_then_stops(self, sessions):
         row, (u0,) = seed(sessions)

@@ -1545,16 +1545,12 @@ def _watch_reconcile(state, payload: dict) -> dict:
 
 @handler("requests.landed")
 async def _requests_landed(state, payload: dict) -> dict:
-    """The scheduler calls `tick` directly, so no Job row is queued every few minutes.
+    """No-op: the scheduler calls `request_landings.tick` directly, and it owns this kind.
 
-    This exists so the kind is a registered handler like every catalogue entry; it only reads Overseerr and
-    may start an ordinary run, which takes the writer lock itself.
+    The kind stays a registered handler like every catalogue entry. Running `tick` from here could start a
+    Plex-writing run from a kind that declares writes_plex=False, and race the scheduled tick.
     """
-    from types import SimpleNamespace
-
-    from shortlist.server.services import request_landings
-
-    await request_landings.tick(SimpleNamespace(state=state))
+    logger.debug("requests.landed: the scheduler owns this kind; nothing to do")
     return {}
 
 

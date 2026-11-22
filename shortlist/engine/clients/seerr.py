@@ -302,7 +302,7 @@ class SeerrClient:
             SeerrError: The instance is unreachable or a page has the wrong shape.
         """
         # Imported here: requests_row imports this module, so a top-level import would close the cycle.
-        from shortlist.engine.requests_row import _iso
+        from shortlist.engine.requests_row import parse_iso_utc
 
         out: list[dict] = []
         for _page in range(self._RECENT_MAX_PAGES):
@@ -312,7 +312,7 @@ class SeerrClient:
             self._require_page("/request", payload)
             batch = payload["results"]
             for row in batch:
-                updated = _iso(row.get("updatedAt"))
+                updated = parse_iso_utc(row.get("updatedAt"))
                 if updated is None:
                     continue  # no usable date to place it by; it cannot be shown to be recent
                 if updated < since:
