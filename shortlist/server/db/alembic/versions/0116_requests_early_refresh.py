@@ -32,7 +32,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    if "requests_early_refresh" in _columns(bind, "collections"):
-        with op.batch_alter_table("collections") as batch:
-            batch.drop_column("requests_early_refresh")
+    if "requests_early_refresh" in _columns(op.get_bind(), "collections"):
+        op.drop_column("collections", "requests_early_refresh")

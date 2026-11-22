@@ -20,6 +20,7 @@ pytestmark = pytest.mark.integration
 
 #: Every key `row_editing.serialize_row` renders — `GET`, `POST` and `PATCH /api/collections` alike.
 COLLECTION_KEYS = {
+    "requests_early_refresh",
     "ai_instructions",
     "ai_paused",
     "ai_tokens",

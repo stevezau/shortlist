@@ -352,7 +352,7 @@ class Collection(Base):
     # How the *arrs tag a person's requests, e.g. "req-{username}"; "" -> only `users.requested_by_tag`.
     requests_tag_pattern: Mapped[str] = mapped_column(String(128), default="", nullable=False, server_default="")
     # Rebuild this row early when one of its requests lands (#191); only meaningful with `requests_row`.
-    requests_early_refresh: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="1")
+    requests_early_refresh: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="1")
     # The AI theme this row is built from; deleting the theme unlinks the row instead of deleting it.
     theme_id: Mapped[int | None] = mapped_column(
         ForeignKey("themes.id", ondelete="SET NULL", name="fk_collections_theme_id_themes"), nullable=True, default=None

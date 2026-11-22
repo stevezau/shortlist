@@ -396,7 +396,7 @@ export function YourRequestsBlock(props: KindBlockProps) {
         </div>
       )}
 
-      {props.shown.has("requests_window_days") && (
+      {props.shown.has("requests_early_refresh") && (
         <div data-setting="requests_early_refresh" className="space-y-2">
           <div className="flex items-center gap-3">
             <Switch
@@ -409,9 +409,8 @@ export function YourRequestsBlock(props: KindBlockProps) {
             </Label>
           </div>
           <p className="text-sm text-muted-foreground">
-            Checks Overseerr every few minutes. When someone&rsquo;s request lands
-            on Plex, their row updates without waiting for the schedule. Several
-            arrivals close together go in one update, at most once per the early update limit in Settings.
+            Adds a request to their row soon after it lands on Plex, instead of
+            waiting for the row&rsquo;s schedule.
           </p>
         </div>
       )}

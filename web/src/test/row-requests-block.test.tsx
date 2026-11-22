@@ -133,7 +133,7 @@ describe("YourRequestsBlock", () => {
     expect(toggle).toBeChecked();
     expect(
       screen.getByText(
-        "Checks Overseerr every few minutes. When someone’s request lands on Plex, their row updates without waiting for the schedule. Several arrivals close together go in one update, at most once per the early update limit in Settings.",
+        "Adds a request to their row soon after it lands on Plex, instead of waiting for the row’s schedule.",
       ),
     ).toBeInTheDocument();
     fireEvent.click(toggle);

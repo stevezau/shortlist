@@ -80,6 +80,7 @@ SETTING_VALUES = {
     "requests.sonarr.root_folder": "/synthetic/shows",
     "requests.sonarr.monitor": "firstSeason",
     "requests.season_count": 2,
+    "requests.landed_min_gap_min": 30,
     "notify.webhook.enabled": True,
     "notify.webhook.events": ["run.finished", "privacy.exposure"],
     "notify.webhook.auth_header_name": "X-Synthetic-Authorization",
@@ -99,13 +100,14 @@ SETTING_VALUES = {
     "sync.check_cron": "25 0 1 1 *",
     "maintenance.prune_cron": "30 0 1 1 *",
     "themes.rotate_cron": "35 0 1 1 *",
+    "requests.landed_poll_cron": "40 0 1 1 *",
 }
 
 
 def test_the_roundtrip_cases_cover_exactly_every_advertised_writable_setting():
     writable = {item.key for item in get_settings_catalog() if item.assistant_writable}
     assert set(SETTING_VALUES) == writable
-    assert len(writable) == 76
+    assert len(writable) == 78
 
 
 @pytest.mark.parametrize(

@@ -342,6 +342,7 @@ export const ROW_SETTING_KEYS = [
   "min_watchers",
   "seasons",
   "requests_window_days",
+  "requests_early_refresh",
   "requests_sources",
   "requests_tag_pattern",
   "libraries",
@@ -387,6 +388,7 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
   min_watchers: "How many people must have watched a title",
   seasons: "Seasons",
   requests_window_days: "Show titles that landed in the last",
+  requests_early_refresh: "Update as soon as a request lands",
   requests_sources: "Where requests are read from",
   requests_tag_pattern: "Use my own tags",
   libraries: "Libraries",
@@ -446,7 +448,7 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   requests_row: "kind",
   requests_window_days: "requests_window_days",
   requests_tag_pattern: "requests_tag_pattern",
-  requests_early_refresh: "requests_window_days",
+  requests_early_refresh: "requests_early_refresh",
   unstarted_only: "unstarted_only",
   refresh_days: "refresh_days",
   idle_hold_days: "idle_hold_days",
@@ -583,7 +585,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "requests",
   ],
   // Built from the request ledger, not from watches: no seeds, sources, cap or cadence apply.
-  requests: ["requests_window_days", "requests_sources", "requests_tag_pattern"],
+  requests: ["requests_window_days", "requests_early_refresh", "requests_sources", "requests_tag_pattern"],
   popular: ["min_watchers"],
 };
 
