@@ -122,4 +122,16 @@ describe("AiWebSearchCard", () => {
       screen.getByText(/your AI provider’s own search/),
     ).toBeInTheDocument();
   });
+
+  it("names Keenable and says what it logs, and needs no key to be ready", () => {
+    renderCard({ ...CLAUDE, "llm_web.search_provider": "keenable" });
+    expect(screen.getByText("Keenable")).toBeInTheDocument();
+    expect(screen.getByText(/logs along with the IP address/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No Keenable/i)).not.toBeInTheDocument();
+  });
+
+  it("asks Keenable owners for an AI provider, since it returns raw snippets", () => {
+    renderCard({ "curator.provider": "none", "llm_web.search_provider": "keenable" });
+    expect(screen.getByText(/Keenable returns raw web snippets/)).toBeInTheDocument();
+  });
 });

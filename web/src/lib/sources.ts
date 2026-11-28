@@ -69,7 +69,7 @@ export function hasMdblist(settings: Settings): boolean {
   return Boolean(settingString(settings, "requests.mdblist.apikey"));
 }
 
-/** Which backend the llm_web source searches with: 'native' | 'exa' | 'searxng' (owner-chosen).
+/** Which backend the llm_web source searches with: 'native' | 'exa' | 'searxng' | 'keenable' (owner-chosen).
  *  There was an 'auto' (native unioned with an external); it was removed in 1.3 and migration 0063
  *  pins every install off it, so a stored 'auto' reads as the default. */
 export function webSearchProvider(settings: Settings): string {
@@ -95,7 +95,7 @@ export type AiInstructionsInert = "no_provider" | "no_native_search" | null;
 export function aiInstructionsInert(settings: Settings): AiInstructionsInert {
   if (!hasCurator(settings)) return "no_provider";
   const backend = webSearchProvider(settings);
-  const external = backend === "exa" || backend === "searxng";
+  const external = backend === "exa" || backend === "searxng" || backend === "keenable";
   return external || hasNativeWebSearch(settings) ? null : "no_native_search";
 }
 
@@ -109,9 +109,15 @@ export function hasSearxng(settings: Settings): boolean {
   return Boolean(settingString(settings, "searxng.url"));
 }
 
-/** Whether EITHER external search backend is set up (the two ways a non-native provider searches). */
+/** Whether Keenable is the chosen backend. It needs no setup — with no key it searches Keenable's
+ *  keyless endpoint — so choosing it is what makes it ready; `keenable.apikey` only lifts the limits. */
+export function hasKeenable(settings: Settings): boolean {
+  return webSearchProvider(settings) === "keenable";
+}
+
+/** Whether an external search backend is set up (the ways a non-native provider searches). */
 export function hasExternalSearch(settings: Settings): boolean {
-  return hasExa(settings) || hasSearxng(settings);
+  return hasExa(settings) || hasSearxng(settings) || hasKeenable(settings);
 }
 
 /**
@@ -128,6 +134,7 @@ export function hasWebSearch(settings: Settings): boolean {
   const mode = webSearchProvider(settings);
   if (mode === "exa") return hasExa(settings); // Exa extracts titles itself — no AI needed
   if (mode === "searxng") return hasSearxng(settings) && hasCurator(settings);
+  if (mode === "keenable") return hasCurator(settings); // snippets only, like SearXNG — a model reads them
   return hasNativeWebSearch(settings); // native — the provider's own tool IS the AI
 }
 
@@ -144,12 +151,14 @@ export function sourceBlockedReason(
     // no AI at all, because it extracts the titles itself.
     const mode = webSearchProvider(settings);
     if (mode === "exa")
-      return "Needs an Exa API key — add it in Connections, or switch the search backend there to SearXNG or your AI provider's own.";
+      return "Needs an Exa API key — add it in Connections, or switch the search backend there to SearXNG, Keenable or your AI provider's own.";
     if (mode === "searxng")
       return !hasSearxng(settings)
-        ? "Needs the address of your SearXNG instance — add it in Connections, or switch the search backend there to Exa or your AI provider's own."
+        ? "Needs the address of your SearXNG instance — add it in Connections, or switch the search backend there to Exa, Keenable or your AI provider's own."
         : "Needs an AI provider to read SearXNG's results — set one up in Connections, or switch the search backend there to Exa, which needs none.";
-    return "Needs Claude, GPT, or Gemini — Ollama can't web-search. Change your AI provider in Connections, or switch the search backend there to Exa or your own SearXNG.";
+    if (mode === "keenable")
+      return "Needs an AI provider to read Keenable's results — set one up in Connections, or switch the search backend there to Exa, which needs none.";
+    return "Needs Claude, GPT, or Gemini — Ollama can't web-search. Change your AI provider in Connections, or switch the search backend there to Exa, Keenable or your own SearXNG.";
   }
   return null;
 }

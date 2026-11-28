@@ -339,7 +339,7 @@ VALIDATORS = {
     "requests.hold_genres": _movie_genre_ids,
     "requests.hold_tags": _tmdb_tags,
     "candidates.sources": _known_sources,
-    "llm_web.search_provider": _one_of("native", "exa", "searxng"),
+    "llm_web.search_provider": _one_of("native", "exa", "searxng", "keenable"),
     "llm_web.instructions": _text_at_most(MAX_INSTRUCTIONS_CHARS),
     # Validated here as well as clamped in the client: a typo saved through the API would otherwise
     # be a 400 from Exa on every seed of every run, and the owner would see an empty row, not a bad

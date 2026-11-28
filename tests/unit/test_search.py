@@ -16,13 +16,17 @@ from shortlist.engine.clients.search import (
     DEFAULT_EXA_SEARCH_TYPE,
     EXA_SEARCH_TYPES,
     EXA_SEARCH_URL,
+    KEENABLE_PUBLIC_SEARCH_URL,
+    KEENABLE_SEARCH_URL,
     ExaClient,
+    KeenableClient,
     SearchResult,
     SearxngClient,
     TitleCandidate,
     extracts_titles,
 )
 
+_KEENABLE = json.loads((Path(__file__).parents[1] / "fixtures" / "keenable_search.json").read_text())
 _FIXTURE = json.loads((Path(__file__).parents[1] / "fixtures" / "searxng_search.json").read_text())
 # A real Exa `deep-lite` response with `outputSchema` attached, recorded 2026-09-02. Verbatim except
 # the `grounding` array, trimmed from 93 near-identical entries to 3 (40KB of the 59KB).
@@ -411,3 +415,126 @@ class TestExaTimeouts:
 
     def test_an_explicit_timeout_still_wins(self):
         assert ExaClient("k", search_type="deep", timeout=5.0)._timeout == 5.0
+
+
+class TestKeenableClient:
+    @respx.mock
+    def test_without_a_key_it_posts_to_the_public_endpoint_with_a_title_header(self):
+        public = respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        keyed = respx.post(KEENABLE_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        KeenableClient().search("shows like Severance", num_results=3)
+
+        assert len(public.calls) == 1 and len(keyed.calls) == 0
+        request = public.calls.last.request
+        assert request.headers["x-keenable-title"] == "Shortlist"  # the keyless path requires it
+        assert "x-api-key" not in request.headers
+        body = json.loads(request.content)
+        assert body["query"] == "shows like Severance"
+        assert body["max_results"] == 3
+        assert body["snippet_max_length"] == 800  # Exa's text budget; the API accepts 180-10,000
+        assert body["moderation"] == "moderate"  # SearXNG's safesearch=1 equivalent
+
+    @respx.mock
+    def test_with_a_key_it_posts_to_the_keyed_endpoint_and_the_key_rides_a_header(self):
+        keyed = respx.post(KEENABLE_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        public = respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        KeenableClient("kn-key-123").search("q")
+
+        assert len(keyed.calls) == 1 and len(public.calls) == 0
+        request = keyed.calls.last.request
+        assert request.headers["x-api-key"] == "kn-key-123"
+        assert "kn-key-123" not in str(request.url)  # never the URL (rule 9)
+        assert "x-keenable-title" not in request.headers
+
+    @respx.mock
+    def test_a_blank_key_counts_as_no_key(self):
+        public = respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        KeenableClient("   ").search("q")
+        assert len(public.calls) == 1
+
+    @respx.mock
+    def test_search_maps_the_recorded_snippet_to_text_in_ranking_order(self):
+        respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        out = KeenableClient().search("shows like Severance", num_results=3)
+
+        expected = _KEENABLE["results"]
+        assert [r.title for r in out] == [r["title"] for r in expected]
+        assert [r.url for r in out] == [r["url"] for r in expected]
+        assert [r.text for r in out] == [r["snippet"] for r in expected]
+
+    @respx.mock
+    def test_search_never_returns_more_than_it_was_asked_for(self):
+        respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        assert len(_KEENABLE["results"]) > 2  # the recording must be able to prove the cap
+        assert len(KeenableClient().search("q", num_results=2)) == 2
+
+    @respx.mock
+    def test_results_with_no_title_are_skipped_and_an_empty_page_is_not_an_error(self):
+        body = {"results": [{"title": "", "url": "u", "snippet": "s"}, {"title": "Keep", "url": "u2", "snippet": "s2"}]}
+        respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+        assert KeenableClient().search("q") == [SearchResult(title="Keep", url="u2", text="s2")]
+        respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json={"results": []}))
+        assert KeenableClient().search("q") == []
+
+    @respx.mock
+    @pytest.mark.parametrize("asked, sent", [(0, 1), (5, 5), (500, 50)])
+    def test_max_results_stays_inside_the_range_the_api_accepts(self, asked, sent):
+        route = respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json={"results": []}))
+        KeenableClient().search("q", num_results=asked)
+        assert json.loads(route.calls.last.request.content)["max_results"] == sent
+
+    def test_it_returns_snippets_only_so_the_curator_reads_them(self):
+        """No `search_detailed`: like SearXNG, a model has to turn the snippets into titles."""
+        assert extracts_titles(KeenableClient()) is False
+
+    @respx.mock
+    def test_a_rejected_key_says_so_without_echoing_it(self):
+        respx.post(KEENABLE_SEARCH_URL).mock(return_value=httpx.Response(401, json={"error": "Unauthorized"}))
+        with pytest.raises(RuntimeError, match="rejected the API key") as excinfo:
+            KeenableClient("kn-secret-key").search("q")
+        assert "kn-secret-key" not in str(excinfo.value)
+
+    @respx.mock
+    def test_out_of_credits_is_translated_and_not_retried(self):
+        route = respx.post(KEENABLE_SEARCH_URL).mock(
+            return_value=httpx.Response(402, json={"code": "insufficient_credits"})
+        )
+        with pytest.raises(RuntimeError, match="out of credits"):
+            KeenableClient("kn-key").search("q")
+        assert len(route.calls) == 1  # the docs say stop on 402, don't retry
+
+    @respx.mock
+    def test_a_rate_limit_is_retried_then_names_the_per_ip_limit_for_the_keyless_path(self):
+        route = respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(
+            return_value=httpx.Response(429, headers={"Retry-After": "1"})
+        )
+        with pytest.raises(RuntimeError, match="limited per IP"):
+            KeenableClient().search("q")
+        assert len(route.calls) > 1  # 429 is retried by http_retry before it surfaces
+
+    @respx.mock
+    def test_a_server_error_never_carries_the_url(self):
+        respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(500, text="boom"))
+        with pytest.raises(RuntimeError) as excinfo:
+            KeenableClient().search("q")
+        assert "/v1/search" not in str(excinfo.value)
+        assert "500" in str(excinfo.value)
+
+    @respx.mock
+    def test_an_html_answer_is_a_clear_error(self):
+        respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, html="<h1>captive portal</h1>"))
+        with pytest.raises(RuntimeError, match="other than JSON"):
+            KeenableClient().search("q")
+
+    @respx.mock
+    def test_ping_reports_which_path_answered(self):
+        respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        respx.post(KEENABLE_SEARCH_URL).mock(return_value=httpx.Response(200, json=_KEENABLE))
+        assert KeenableClient().ping() == "Keenable answered without a key — 1 result"
+        assert KeenableClient("k").ping() == "Keenable key works — 1 result"
+
+    @respx.mock
+    def test_ping_surfaces_a_bad_key(self):
+        respx.post(KEENABLE_SEARCH_URL).mock(return_value=httpx.Response(403))
+        with pytest.raises(RuntimeError, match="rejected the API key"):
+            KeenableClient("bad").ping()

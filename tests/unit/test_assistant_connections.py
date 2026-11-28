@@ -186,3 +186,26 @@ def test_probe_starts_real_snapshot_before_decryption_and_rechecks_revocation(co
         connections.check(principal, "tmdb")
     assert calls == []
     event.remove(engine, "before_cursor_execute", listener)
+
+
+def test_choosing_keenable_is_what_makes_it_configured_because_it_runs_without_a_key(connections, principal):
+    """The key only lifts the keyless endpoint's limits, so a card with no key is still ready once picked."""
+    assert connections.start(principal, "keenable").data["configured"] is False
+    with connections.state.sessions() as session:
+        session.add(Setting(key="llm_web.search_provider", value={"v": "exa"}))
+        session.commit()
+    assert connections.start(principal, "keenable").data["configured"] is False
+    with connections.state.sessions() as session:
+        session.get(Setting, "llm_web.search_provider").value = {"v": "keenable"}
+        session.commit()
+    flow = connections.start(principal, "keenable")
+    assert flow.data["configured"] is True
+    assert flow.data["browser_url"].endswith("#connection-llm")
+
+
+def test_keenable_live_test_requires_a_browser_action(connections, principal, monkeypatch):
+    monkeypatch.setattr(
+        "shortlist.server.assistant.connections.probe_read_only_connection",
+        lambda *args: pytest.fail("a search test was dispatched without a browser action"),
+    )
+    assert connections.check(principal, "keenable").data["checked"] is False

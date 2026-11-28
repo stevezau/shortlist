@@ -180,7 +180,7 @@ describe("RowAiInstructionsField", () => {
     renderField({ value: { mode: "add", text: "x" }, backend: "native", inert: "no_native_search" });
     expect(
       screen.getByText(
-        "Your AI provider can't search the web itself, so these instructions have no effect. Choose Exa or SearXNG in Settings → Connections.",
+        "Your AI provider can't search the web itself, so these instructions have no effect. Choose Exa, SearXNG or Keenable in Settings → Connections.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/needs an AI provider/)).toBeNull();

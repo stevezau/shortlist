@@ -32,5 +32,6 @@ export function mixModeLine(settings: Settings | undefined): string | null {
       : "Each one is one more Exa search, cached a week.";
   }
   if (provider === "searxng") return "Each one is one more search on your SearXNG server.";
+  if (provider === "keenable") return "Each one is one more Keenable search, cached a week.";
   return "Favourites and older watches are added to what the AI is told; Shortlist runs no extra searches.";
 }

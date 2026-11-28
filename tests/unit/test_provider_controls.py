@@ -7,6 +7,7 @@ reaches an SDK or HTTP transport.
 from __future__ import annotations
 
 import base64
+import json
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -16,7 +17,14 @@ import httpx
 import pytest
 import respx
 
-from shortlist.engine.clients.search import EXA_SEARCH_URL, ExaClient, SearxngClient
+from shortlist.engine.clients.search import (
+    EXA_SEARCH_URL,
+    KEENABLE_PUBLIC_SEARCH_URL,
+    KEENABLE_SEARCH_URL,
+    ExaClient,
+    KeenableClient,
+    SearxngClient,
+)
 from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.poster_service import PosterStudio, _GoogleArtist, _OpenAIArtist
@@ -240,6 +248,39 @@ def test_searxng_control_disables_retry_redirects():
     assert len(route.calls) == 1
     assert calls[0].kind == "external_search"
     assert calls[0].destination == url
+
+
+@respx.mock
+@pytest.mark.parametrize("key, url", [("", KEENABLE_PUBLIC_SEARCH_URL), ("kn-key", KEENABLE_SEARCH_URL)])
+def test_keenable_control_disables_retries_and_redirects_and_describes_destination(key, url):
+    calls: list[ProviderCall] = []
+    route = respx.post(url).mock(return_value=httpx.Response(302, headers={"Location": "https://example.test/x"}))
+    redirected = respx.post("https://example.test/x").mock(return_value=httpx.Response(200, json={"results": []}))
+    with pytest.raises(RuntimeError):
+        KeenableClient(key, provider_controls=_controls(guard=_recording_guard(calls))).search("q")
+
+    assert len(route.calls) == 1
+    assert len(redirected.calls) == 0
+    assert calls[0].kind == "external_search"
+    assert calls[0].provider == "keenable"
+    assert calls[0].destination == "https://api.keenable.ai"
+
+
+@respx.mock
+def test_keenable_control_disables_status_retries():
+    calls: list[ProviderCall] = []
+    route = respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(503))
+    with pytest.raises(RuntimeError):
+        KeenableClient(provider_controls=_controls(guard=_recording_guard(calls))).search("q")
+    assert len(route.calls) == 1
+
+
+@respx.mock
+def test_keenable_control_caps_the_result_count():
+    calls: list[ProviderCall] = []
+    route = respx.post(KEENABLE_PUBLIC_SEARCH_URL).mock(return_value=httpx.Response(200, json={"results": []}))
+    KeenableClient(provider_controls=_controls(guard=_recording_guard(calls))).search("q", num_results=40)
+    assert json.loads(route.calls.last.request.content)["max_results"] == 10
 
 
 def test_openai_artist_is_one_image_call_and_guarded(monkeypatch):

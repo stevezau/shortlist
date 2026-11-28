@@ -225,7 +225,8 @@ export function sourceRole(source: string): string {
 
 /** Display name of an external search backend, for the run trace's plain-English sentences. */
 function backendName(provider: string): string {
-  return provider === "searxng" ? "SearXNG" : "Exa";
+  if (provider === "searxng") return "SearXNG";
+  return provider === "keenable" ? "Keenable" : "Exa";
 }
 
 /** "an Exa" / "a SearXNG" — the article follows the sound of the name, not its spelling. */
@@ -249,7 +250,7 @@ export function webMechanism(
   if (mode === "native")
     return "The AI model’s own built-in web search proposed titles directly.";
   const name = backendName(provider ?? mode);
-  if (mode === "exa" || mode === "searxng" || (hasSearches && mode !== "auto"))
+  if (mode === "exa" || mode === "searxng" || mode === "keenable" || (hasSearches && mode !== "auto"))
     return `We searched the web with ${name}, then the AI read the results and proposed titles.`;
   if (mode === "auto")
     return hasSearches

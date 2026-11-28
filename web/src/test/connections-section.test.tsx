@@ -196,6 +196,46 @@ describe("ConnectionsSection", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("offers an optional Keenable key and none of the other backends' fields", async () => {
+      renderSection({ "llm_web.search_provider": "keenable" });
+      const card = screen.getByTestId("connection-llm");
+      await userEvent.click(
+        within(card).getByRole("button", { name: /edit|set up/i }),
+      );
+      expect(
+        within(card).getByLabelText(/Keenable API key \(optional/i),
+      ).toBeInTheDocument();
+      expect(within(card).queryByLabelText(/Exa API key/i)).not.toBeInTheDocument();
+      expect(within(card).queryByLabelText(/SearXNG address/i)).not.toBeInTheDocument();
+    });
+
+    it("tests Keenable with no key saved, because choosing it is the whole setup", async () => {
+      renderSection({
+        "llm_web.search_provider": "keenable",
+        "curator.provider": "anthropic",
+      });
+      await waitFor(() =>
+        expect(testConnection.mock.calls.map((c) => c[0])).toContain("keenable"),
+      );
+    });
+
+    it("disables None under Keenable — something must read the snippets", async () => {
+      const card = await openWebSearchCard({
+        "llm_web.search_provider": "keenable",
+      });
+      expect(within(card).getByRole("button", { name: "None" })).toBeDisabled();
+      expect(within(card).getByRole("button", { name: /Local/i })).toBeEnabled();
+    });
+
+    it("says in the hint that Keenable logs queries with or without a key", async () => {
+      const card = await openWebSearchCard({
+        "llm_web.search_provider": "keenable",
+      });
+      expect(
+        within(card).getByText(/logs queries and IP addresses with or without a key/i),
+      ).toBeInTheDocument();
+    });
+
     it("asks for one backend's fields, never both", () => {
       // Exactly one backend runs, so exactly one is ever configured. Showing both was `auto`'s
       // doing, and `auto` is gone.

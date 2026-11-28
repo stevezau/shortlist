@@ -13,7 +13,7 @@ import { settingBool, settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
 import { latestRunChain } from "@/lib/dashboard-status";
 import { useRuns } from "@/lib/queries";
-import { hasExa, hasExternalSearch, hasSearxng } from "@/lib/sources";
+import { hasExa, hasExternalSearch, hasKeenable, hasSearxng } from "@/lib/sources";
 import type { Run, Settings, TestableService } from "@/lib/types";
 
 /** The one "Search with" choice, matching the picker on the AI web search card so the two can never
@@ -22,6 +22,7 @@ const SEARCH_BACKENDS = [
   { value: "exa", label: "Exa" },
   { value: "native", label: "AI Search" },
   { value: "searxng", label: "SearXNG" },
+  { value: "keenable", label: "Keenable" },
 ] as const;
 
 /** Providers whose own model can search the web. Mirrors NATIVE_WEB_SEARCH_PROVIDERS in sources.ts
@@ -34,7 +35,8 @@ const CAN_SEARCH_ALONE = ["anthropic", "openai", "google"];
  *  Three different answers, which is why one flat list was never going to work:
  *  - `exa`     — every provider, plus None: Exa extracts titles itself, so an AI is optional here.
  *  - `native`  — only providers whose model can search. A local model has no search tool at all.
- *  - `searxng` — every provider EXCEPT None: raw snippets need something to read them. */
+ *  - `searxng` — every provider EXCEPT None: raw snippets need something to read them.
+ *  - `keenable` — the same as SearXNG: snippets only. */
 function providerOptionsFor(values: Record<string, string>) {
   const backend = values["llm_web.search_provider"] || "native";
   return CURATOR_PROVIDERS.map((provider) => {
@@ -46,7 +48,7 @@ function providerOptionsFor(values: Record<string, string>) {
         disabled: true,
         reason: isNone
           ? "“AI Search” means your AI does the searching, so it needs one. Pick Exa above instead — it searches on its own and needs no AI at all."
-          : `${provider.label} models have no web search built in — there is no tool to switch on. Pick Exa or SearXNG above and ${provider.label} can still choose the titles.`,
+          : `${provider.label} models have no web search built in — there is no tool to switch on. Pick Exa, SearXNG or Keenable above and ${provider.label} can still choose the titles.`,
       };
     if (backend === "searxng" && isNone)
       return {
@@ -55,6 +57,14 @@ function providerOptionsFor(values: Record<string, string>) {
         disabled: true,
         reason:
           "SearXNG returns raw web pages, so something has to read them to find the titles. Pick any provider — a local one is fine — or switch to Exa above, which reads its own results.",
+      };
+    if (backend === "keenable" && isNone)
+      return {
+        value: provider.id,
+        label: provider.label,
+        disabled: true,
+        reason:
+          "Keenable returns web snippets, so something has to read them to find the titles. Pick any provider — a local one is fine — or switch to Exa above, which reads its own results.",
       };
     return { value: provider.id, label: provider.label };
   });
@@ -84,6 +94,8 @@ function providerHint(values: Record<string, string>): string | undefined {
       : "Optional here. It picks which of Exa’s titles suit each person, and on OpenAI or Gemini it also makes row poster art.";
   if (backend === "searxng")
     return "Required: something has to read SearXNG’s raw snippets. Any provider will do, a local one included.";
+  if (backend === "keenable")
+    return "Required: something has to read Keenable’s snippets. Any provider will do, a local one included.";
   return "Required: with this backend, your AI is what does the searching.";
 }
 
@@ -125,6 +137,7 @@ const EXA_SEARCH_TYPES = [
  *  - native  — the AI IS the search, so an AI is required by definition (and Gemini declines to).
  *  - exa     — Exa extracts titles itself via `outputSchema`, so it works with NO AI at all.
  *  - searxng — returns raw snippets, so something must read them: an AI is required.
+ *  - keenable — the same: snippets only, so an AI is required.
  *
  *  Worth stating plainly because the failure was silent and expensive: Exa with the provider set to
  *  None would pay for every search and discard the titles. */
@@ -134,6 +147,8 @@ function backendHint(chosen: string | undefined): string | undefined {
     return "Recommended. Finds the most titles, and reads its own results — so it works with no AI provider at all.";
   if (backend === "searxng")
     return "Free and self-hosted. Returns raw web snippets, so it needs an AI provider below to read them.";
+  if (backend === "keenable")
+    return "A hosted search API. It works without a key, rate limited per IP; a key lifts the limit. Keenable logs queries and IP addresses with or without a key. Returns web snippets, so it needs an AI provider below to read them.";
   // native — which provider does the searching, and its caveats, belong to the provider field below.
   return "Your AI searches the web itself, as part of one call per person. Billed by your provider.";
 }
@@ -142,7 +157,7 @@ function backendHint(chosen: string | undefined): string | undefined {
  *  so exactly one backend's fields are ever asked for. */
 function offers(
   values: Record<string, string>,
-  backend: "exa" | "searxng",
+  backend: "exa" | "searxng" | "keenable",
 ): boolean {
   return (values["llm_web.search_provider"] || "native") === backend;
 }
@@ -162,6 +177,7 @@ function testableSearchService(settings: Settings): TestableService {
   const chosen = settingString(settings, "llm_web.search_provider") || "native";
   if (chosen === "exa" && hasExa(settings)) return "exa";
   if (chosen === "searxng" && hasSearxng(settings)) return "searxng";
+  if (hasKeenable(settings)) return "keenable";
   // No external backend on file: the useful probe is the AI provider itself, which also gives
   // heuristic mode ("none") a real answer instead of erroring on a search that cannot run.
   return "llm";
@@ -183,7 +199,9 @@ function searchSummary(settings: Settings): string {
       ? hasSearxng(settings)
         ? `SearXNG · ${settingString(settings, "searxng.url")}`
         : ""
-      : chosen === "exa"
+      : hasKeenable(settings)
+        ? "Keenable"
+        : chosen === "exa"
         ? hasExa(settings)
           ? "Exa"
           : ""
@@ -399,6 +417,13 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
                   (t) => t.value === (v["exa.search_type"] || "deep-lite"),
                 )?.hint,
               showIf: (v) => offers(v, "exa"),
+            },
+            {
+              key: "keenable.apikey",
+              label: "Keenable API key (optional — works without one)",
+              kind: "password",
+              helpUrl: "https://docs.keenable.ai/authentication",
+              showIf: (v) => offers(v, "keenable"),
             },
             {
               key: "searxng.url",

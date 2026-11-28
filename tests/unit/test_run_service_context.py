@@ -15,7 +15,7 @@ import requests
 from sqlalchemy.orm import sessionmaker
 
 import shortlist.server.services.context_builder as context_builder_mod
-from shortlist.engine.clients.search import ExaClient, SearxngClient
+from shortlist.engine.clients.search import ExaClient, KeenableClient, SearxngClient
 from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import MediaType, UserProfile, UserType
 from shortlist.server.db.models import PickRow, User
@@ -74,10 +74,13 @@ class TestWebSearchBackendChoice:
     """
 
     @staticmethod
-    def _get(mode: str = "native", *, exa: str = "", url: str = "", user: str = "", password: str = ""):
+    def _get(
+        mode: str = "native", *, exa: str = "", url: str = "", user: str = "", password: str = "", keenable: str = ""
+    ):
         values = {
             "llm_web.search_provider": mode,
             "exa.apikey": exa,
+            "keenable.apikey": keenable,
             "searxng.url": url,
             "searxng.username": user,
             "searxng.password": password,
@@ -99,6 +102,21 @@ class TestWebSearchBackendChoice:
         """The self-hoster's case: they chose local search, so a missing URL means no search at all —
         it must never fall through to shipping their watch history to a paid API."""
         assert make_search_client(self._get("searxng", exa="k")) is None
+
+    def test_keenable_mode_builds_a_keyless_client_when_no_key_is_saved(self):
+        """Picking Keenable is the opt-in; the key only lifts the keyless endpoint's limits."""
+        client = make_search_client(self._get("keenable"))
+        assert isinstance(client, KeenableClient)
+        assert client._api_key == ""
+
+    def test_keenable_mode_passes_the_saved_key_through(self):
+        client = make_search_client(self._get("keenable", keenable="kn-key"))
+        assert client._api_key == "kn-key"
+
+    def test_other_modes_never_reach_keenable_even_with_a_key_saved(self):
+        """A leftover Keenable key must not turn another owner-chosen backend into a Keenable search."""
+        for mode in ("native", "exa", "searxng", ""):
+            assert not isinstance(make_search_client(self._get(mode, keenable="kn-key", exa="k")), KeenableClient)
 
     def test_an_unset_backend_reads_as_native_and_builds_nothing(self):
         """A blank value is the fresh-install state, and the default is the provider's own search."""

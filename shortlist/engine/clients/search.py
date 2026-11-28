@@ -9,7 +9,7 @@ Two ways the "search the web for what to watch next" source can get web results:
   is the universal path: it works for every curator, Ollama included, because the model reads what we
   found instead of searching itself.
 
-Two external providers ship today, both behind the same ``WebSearchProvider`` protocol:
+Three external providers ship today, all behind the same ``WebSearchProvider`` protocol:
 
 * **Exa** — a hosted search API built for LLM grounding. Bills per search; returns extracted PAGE
   TEXT *and*, via ``outputSchema``, a structured list of the titles those pages recommend — so the
@@ -18,6 +18,9 @@ Two external providers ship today, both behind the same ``WebSearchProvider`` pr
   key, though it does forward each query on to real search engines. Returns those engines' result
   SNIPPETS (a couple hundred characters) rather than page text, so it takes a wider slice of the one
   page a search returns (see ``results_per_query``).
+* **Keenable** — a hosted web-search API. Snippets only, like SearXNG. It answers with no key at a
+  rate-limited public endpoint, and a key moves the same search to the keyed one. Keenable logs the
+  query and IP on both (docs.keenable.ai/data-privacy).
 """
 
 from __future__ import annotations
@@ -32,6 +35,9 @@ from shortlist.engine.clients import http_retry
 from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls, ProviderCallRefused, provider_call
 
 EXA_SEARCH_URL = "https://api.exa.ai/search"
+KEENABLE_DESTINATION = "https://api.keenable.ai"
+KEENABLE_SEARCH_URL = f"{KEENABLE_DESTINATION}/v1/search"
+KEENABLE_PUBLIC_SEARCH_URL = f"{KEENABLE_DESTINATION}/v1/search/public"
 _DEFAULT_RESULTS = 8
 _DEFAULT_MAX_CHARS = 800  # per-result text budget — enough to name titles, small enough to stay cheap
 
@@ -530,6 +536,123 @@ class SearxngClient:
             )
         # Unconditional count: the empty case raised above, so reaching here means results exist.
         return f"SearXNG responded — {len(results)} results"
+
+
+class KeenableClient:
+    """Keenable web search (https://docs.keenable.ai/api-reference/search), chosen by the owner.
+
+    Snippets only, like SearXNG: it has no ``search_detailed``, so the curator reads the results and
+    proposes the titles. Both endpoints are POST with a JSON body, so a search goes through
+    ``http_retry.idempotent_post`` (repeating one changes nothing).
+
+    * **With a key** — ``POST /v1/search`` and the key in the ``X-API-Key`` header, never the URL.
+    * **Without one** — ``POST /v1/search/public``, rate limited per IP, which Keenable requires an
+      ``X-Keenable-Title`` header on. It is a choice the owner makes by picking Keenable, not a
+      fallback: nothing else in Shortlist reaches this host.
+
+    Keenable logs the query and the IP address on both paths, keyed or not (docs.keenable.ai/data-privacy),
+    and the queries here are built from watch history; only an Enterprise zero-data-retention
+    agreement changes that.
+    ``moderation: moderate`` matches the SearXNG client's ``safesearch=1``.
+    """
+
+    name = "keenable"
+    # Snippets run a few hundred characters, so take as wide a slice as SearXNG does; `_interleave`
+    # shares the RAG prompt's cap across seeds, so this cannot crowd other seeds out.
+    results_per_query = 10
+
+    def __init__(
+        self,
+        api_key: str = "",
+        *,
+        timeout: float = 20.0,
+        provider_controls: ProviderCallControls | None = None,
+    ):
+        self._api_key = api_key.strip()
+        self._provider_controls = provider_controls
+        self._timeout = timeout
+
+    def search(self, query: str, *, num_results: int = _DEFAULT_RESULTS) -> list[SearchResult]:
+        """Run one search and return up to ``num_results`` results with their snippets.
+
+        Args:
+            query: The natural-language search query (built from the user's watchlist upstream).
+            num_results: How many results to ask Keenable for (1-50 are accepted).
+
+        Returns:
+            The results in Keenable's ranking order, never more than ``num_results``. Results with no
+            title are skipped, and an empty page yields ``[]`` — one seed with nothing to find must not
+            fail the other seeds.
+
+        Raises:
+            RuntimeError: A rejected key, an account out of credits, or any other error status. The
+                message never carries the key.
+        """
+        payload = self._post(query, num_results)
+        results: list[SearchResult] = []
+        for item in (payload.get("results") or [])[: max(0, num_results)]:
+            title = (item.get("title") or "").strip()
+            if not title:
+                continue
+            # `snippet` is page text chosen for the query; `text` is what the RAG prompt reads.
+            results.append(
+                SearchResult(title=title, url=item.get("url") or "", text=(item.get("snippet") or "").strip())
+            )
+        logger.debug("keenable search · {!r} → {} results", query[:60], len(results))
+        return results
+
+    def _post(self, query: str, num_results: int) -> dict:
+        with provider_call(
+            self._provider_controls,
+            ProviderCall(kind="external_search", provider=self.name, destination=KEENABLE_DESTINATION),
+        ):
+            return self._post_response(query, num_results)
+
+    def _post_response(self, query: str, num_results: int) -> dict:
+        bounded = self._provider_controls is not None
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["X-API-Key"] = self._api_key
+        else:
+            headers["X-Keenable-Title"] = "Shortlist"
+        response = http_retry.idempotent_post(
+            KEENABLE_SEARCH_URL if self._api_key else KEENABLE_PUBLIC_SEARCH_URL,
+            attempts=1 if bounded else 2,
+            status_attempts=1 if bounded else 3,
+            **({"follow_redirects": False} if bounded else {}),
+            headers=headers,
+            json={
+                "query": query,
+                "max_results": max(1, min(num_results, 50, self.results_per_query if bounded else 50)),
+                "snippet_max_length": _DEFAULT_MAX_CHARS,
+                "moderation": "moderate",
+            },
+            timeout=self._timeout,
+        )
+        if response.status_code in (401, 403) and self._api_key:
+            raise RuntimeError(f"Keenable rejected the API key (HTTP {response.status_code}) — check it is current.")
+        if response.status_code == 402:
+            raise RuntimeError("Keenable says the account is out of credits (HTTP 402) — add credits, then retry.")
+        if response.status_code == 429:
+            raise RuntimeError(
+                "Keenable rate limited the search (HTTP 429)"
+                + ("." if self._api_key else " — the keyless endpoint is limited per IP; a key lifts that.")
+            )
+        if not response.is_success:
+            # Deliberately NOT `raise_for_status()`, as in the other clients: nothing here is secret,
+            # but this text travels to the API response and an `events` row. Not `is_error` either:
+            # a redirect (refused when bounded) has no JSON body to read.
+            raise RuntimeError(f"Keenable answered HTTP {response.status_code}.")
+        try:
+            return response.json()
+        except ValueError as e:
+            raise RuntimeError("Keenable answered with something other than JSON.") from e
+
+    def ping(self) -> str:
+        """A probe for the Settings 'test connection' button; raises with the fix on a bad key."""
+        found = self.search("popular movies and TV shows to watch this week", num_results=1)
+        mode = "key works" if self._api_key else "answered without a key"
+        return f"Keenable {mode} — {len(found)} result{'' if len(found) == 1 else 's'}"
 
 
 def _unresponsive(payload: dict) -> list[str]:

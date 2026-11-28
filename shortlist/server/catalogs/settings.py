@@ -346,7 +346,8 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
         "The single search backend used by the AI web-search title source.",
         SettingGroup.RECOMMENDATIONS,
         options=_options(
-            ("native", "exa", "searxng"), {"native": "AI provider's native search", "exa": "Exa", "searxng": "SearXNG"}
+            ("native", "exa", "searxng", "keenable"),
+            {"native": "AI provider's native search", "exa": "Exa", "searxng": "SearXNG", "keenable": "Keenable"},
         ),
         prerequisites=(
             _prerequisite(
@@ -428,6 +429,25 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
         assistant_writable=False,
         prerequisites=(_prerequisite("llm_web.search_provider", ("searxng",), "Used only by SearXNG web search."),),
         effects=_CREDENTIAL_EFFECTS,
+        capabilities=(Capability.CONNECTIONS_MANAGE,),
+    ),
+    _setting(
+        "keenable.apikey",
+        "Keenable API key",
+        "Optional encrypted credential for Keenable web search; its value is never returned. "
+        "Without one, Keenable's rate-limited keyless endpoint is used.",
+        SettingGroup.RECOMMENDATIONS,
+        assistant_writable=False,
+        prerequisites=(_prerequisite("llm_web.search_provider", ("keenable",), "Used only by Keenable web search."),),
+        effects=(
+            *_CREDENTIAL_EFFECTS,
+            _effect(
+                Effect.PERSONAL_DATA_DISCLOSURE,
+                EffectTiming.FUTURE_RUN,
+                "History-derived search queries are sent to Keenable, which logs the query and IP address "
+                "with or without a key.",
+            ),
+        ),
         capabilities=(Capability.CONNECTIONS_MANAGE,),
     ),
     _setting(

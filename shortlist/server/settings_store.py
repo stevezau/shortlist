@@ -134,6 +134,9 @@ DEFAULTS: dict[str, Any] = {
     #   'searxng' — the owner's own SearXNG instance. Self-hosted metasearch: no vendor account, key
     #               or per-search bill, though it still FORWARDS each query to real engines
     #               (Google/Brave/DDG), so it is not an air-gapped path.
+    #   'keenable' — the hosted Keenable search API. Snippets only, like SearXNG, so it needs a curator.
+    #               Works with no key at a rate-limited public endpoint; `keenable.apikey` is optional.
+    #               Keenable logs the query and IP either way (docs.keenable.ai/data-privacy).
     # Either external works with every provider and is the only kind a local Ollama model can use.
     # Only native or one external provider: a union of both ('auto') was dropped because owners could
     # not tell what it was doing. Migration 0063 pins existing installs to what they were really using.
@@ -292,6 +295,7 @@ SECRET_KEYS = {
     "trakt.client_id",
     "exa.apikey",  # Exa web-search API key for the llm_web source
     "searxng.password",  # reverse-proxy password guarding a self-hosted SearXNG
+    "keenable.apikey",  # optional Keenable web-search API key for the llm_web source
     "api.token",  # our own programmatic API token (encrypted at rest so the owner can reveal it)
     # A Discord/Slack webhook address IS a bearer token — anyone holding the URL can post to that
     # channel — so it is encrypted at rest and redacted on read like any other credential, even

@@ -23,6 +23,7 @@ from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.search import (
     DEFAULT_EXA_SEARCH_TYPE,
     ExaClient,
+    KeenableClient,
     SearxngClient,
     WebSearchProvider,
 )
@@ -145,7 +146,8 @@ def make_search_client(
     external backend" (``candidates.EXTERNAL_SEARCH_MODES``), so adding a provider never touches it.
 
     The backend is whatever the owner chose, and ONLY that: an unconfigured ``exa``/``searxng``
-    yields None rather than falling through to the other. A fallback would be actively harmful in
+    yields None rather than falling through to the other. (``keenable`` needs no setup: with no key it
+    searches Keenable's keyless endpoint, because the owner picked Keenable.) A fallback would be actively harmful in
     both directions — it would send a self-hoster's watch history to a paid vendor they didn't pick,
     or quietly downgrade a paying owner to a box that may be switched off.
 
@@ -174,6 +176,8 @@ def make_search_client(
             password=str(get("searxng.password") or ""),
             **kwargs,
         )
+    if mode == "keenable":
+        return KeenableClient(str(get("keenable.apikey") or ""), **kwargs)
     return None  # native: the provider searches for itself, so there is no external client
 
 
