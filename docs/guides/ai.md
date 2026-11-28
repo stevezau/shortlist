@@ -60,6 +60,7 @@ that backend's credentials live:
 | Your provider's own web search      | Claude, GPT, Gemini only                   | No extra signup, but unavailable on local models       |
 | [Exa](https://exa.ai) key           | **Every provider, local included**         | One extra free-tier signup; billed per search          |
 | [SearXNG](https://docs.searxng.org) | **Every provider, local included**         | Free and fully self-hosted; you run and maintain it    |
+| [Keenable](https://docs.keenable.ai) | **Every provider, local included**        | Hosted; works without a key, rate limited per IP       |
 
 **Why adding an external backend is worth it**, even when your provider can already search:
 
@@ -68,7 +69,7 @@ metasearch engine you host yourself that forwards queries to ordinary search eng
 Shortlist does the searching and hands the findings to your model, which buys you four things:
 
 1. **It's the only kind of backend that works with a local model.** An Ollama or LM Studio server on your own
-   hardware has no way to reach the internet. With Exa or SearXNG, Shortlist does the searching and
+   hardware has no way to reach the internet. With Exa, SearXNG or Keenable, Shortlist does the searching and
    hands over the findings, so a fully offline model still recommends current titles.
 2. **Your results stop depending on which AI you picked.** Switch from Claude to a cheap local model
    and the search half stays identical. Only the choosing changes.
@@ -87,9 +88,9 @@ trace then says "the local model answered in prose", and the Settings Test butto
 window. Set `OLLAMA_CONTEXT_LENGTH=16384` (or higher) on the Ollama server and restart it. In docker-compose:
 `environment: ["OLLAMA_CONTEXT_LENGTH=16384"]`.
 
-### Exa or SearXNG?
+### Exa, SearXNG or Keenable?
 
-Both work with every provider, and both were measured end-to-end against the same watch history.
+All three work with every provider. Exa and SearXNG were measured end-to-end against the same watch history.
 
 - **Exa** returns extracted page text — roughly 800 characters per result — so the model reads more
   about each title. It needs no infrastructure, and the free tier covers about 1,000 searches a
@@ -98,6 +99,15 @@ Both work with every provider, and both were measured end-to-end against the sam
   so Shortlist pulls twice as many results per search to compensate. Nothing leaves your server
   except the queries SearXNG itself forwards, there is no account or key, and it costs nothing. In
   testing it was also *faster*, and its smaller results made the AI call noticeably cheaper.
+
+- **Keenable** returns snippets, like SearXNG, and needs an AI provider to read them. It is a hosted
+  API that answers without an account at a keyless endpoint limited per IP address; adding a key in
+  **Settings → Connections → AI & Web search** moves the same search to the keyed endpoint for
+  higher limits. Keenable logs the query and the IP address on both, key or no key, and only an
+  Enterprise zero-data-retention agreement changes that (see
+  [Keenable's data and privacy page](https://docs.keenable.ai/data-privacy)). The queries are built
+  from titles in your watch history, so choose it only if you are comfortable sending those to a third party.
+  Shortlist asks for moderated results, as it does with SearXNG's safe search. It is never used unless you pick it.
 
 Pick SearXNG if you already self-host and want no third-party account; pick Exa if you'd rather not
 run another service. Only the backend you pick is used, so configuring one never quietly starts
@@ -251,7 +261,7 @@ cheapest-to-priciest levers:
    is plenty. You don't need a flagship model to read a few search results.
 4. **Run less often.** Nightly is the default. A longer schedule means fewer runs and fewer searches.
 5. **Use a local model.** An Ollama or LM Studio server on your own hardware costs nothing per run.
-   This needs Exa or SearXNG, since a local model can't search the web itself. See
+   This needs Exa, SearXNG or Keenable, since a local model can't search the web itself. See
    [the backend table above](#the-source-that-uses-ai).
 
 **Seeing where the tokens go.** Every run records its AI cost, so there is no guessing. Open a run

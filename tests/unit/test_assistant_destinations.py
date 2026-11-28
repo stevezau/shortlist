@@ -434,3 +434,25 @@ def test_profile_has_maintenance_capability_but_task_still_requires_exact_owner_
     assert Capability.MAINTENANCE_EXECUTE in owner_managed_capabilities()
     assert plan.requirements.capabilities == (Capability.MAINTENANCE_EXECUTE.value,)
     assert plan.requirements.requires_approval is True
+
+
+def test_keenable_is_offered_only_while_it_is_the_chosen_search_backend() -> None:
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        create_schema(engine)
+        sessions = sessionmaker(bind=engine, expire_on_commit=False)
+        with sessions() as session:
+            # A key alone is not a selection: Keenable stays out of the list until the owner picks it.
+            session.add(Setting(key="keenable.apikey", value={"v": "ciphertext"}))
+            session.add(Setting(key="llm_web.search_provider", value={"v": "native"}))
+            session.commit()
+            assert {item.service_id for item in configured_destinations(session)} == set()
+
+            session.get(Setting, "llm_web.search_provider").value = {"v": "keenable"}
+            session.delete(session.get(Setting, "keenable.apikey"))  # keyless is a valid setup
+            session.commit()
+            choices = {item.service_id: item for item in configured_destinations(session)}
+
+        assert {key: item.destination_id for key, item in choices.items()} == {"keenable": "https://api.keenable.ai"}
+        assert "ciphertext" not in repr(choices)

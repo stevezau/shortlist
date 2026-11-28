@@ -31,6 +31,7 @@ ConnectionKind = Literal[
     "notify",
     "exa",
     "searxng",
+    "keenable",
 ]
 
 # Fixed browser destinations and database keys; neither can be supplied as a URL by a caller.
@@ -59,6 +60,7 @@ _CONNECTIONS = {
         ("llm_web.search_provider", "searxng.url", "searxng.username", "searxng.password"),
         ("searxng.url",),
     ),
+    "keenable": ("llm", ("llm_web.search_provider", "keenable.apikey"), ("keenable.apikey",)),
 }
 _FLOW_KIND = "assistant_connection"
 _LIFETIME = 1800
@@ -89,6 +91,10 @@ class ConnectionService:
         _, keys, readiness_keys = _CONNECTIONS[service]
         values = {key: row.value if (row := session.get(Setting, key)) else None for key in keys}
         configured = any(bool(values.get(key) and values[key].get("v")) for key in readiness_keys)
+        if service == "keenable":
+            # Keenable searches with no key, so choosing it is what makes it configured; the key only lifts limits.
+            chosen = values.get("llm_web.search_provider")
+            configured = configured or bool(chosen and chosen.get("v") == "keenable")
         return fingerprint(values), configured
 
     @staticmethod

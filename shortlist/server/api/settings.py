@@ -177,6 +177,7 @@ _TESTABLE_SERVICES = frozenset(
         "trakt",
         "exa",
         "searxng",
+        "keenable",
         "native_search",
         "notify",
         "llm",
@@ -234,7 +235,7 @@ async def test_connection(service: str, request: Request) -> dict:
                 if not getattr(curator, "supports_native_web_search", False):
                     raise RuntimeError(
                         "This AI provider cannot search the web on its own — only Claude, GPT and "
-                        "Gemini can. Choose Exa or SearXNG as the search backend, or change provider."
+                        "Gemini can. Choose Exa, SearXNG or Keenable as the search backend, or change provider."
                     )
                 found = curator.recommend_web(_PROBE_PROFILE, [], 3)
                 if not found:
@@ -267,6 +268,10 @@ async def test_connection(service: str, request: Request) -> dict:
                 return SearxngClient(
                     url, username=get("searxng.username") or "", password=get("searxng.password") or ""
                 ).ping()
+            if service == "keenable":
+                from shortlist.engine.clients.search import KeenableClient
+
+                return KeenableClient(get("keenable.apikey") or "").ping()
             # service == "llm"
             from shortlist.engine.curator import make_curator
             from shortlist.server.services.context_builder import curator_kwargs

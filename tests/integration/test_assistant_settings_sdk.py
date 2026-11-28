@@ -189,7 +189,7 @@ def test_sdk_browser_only_settings_and_mixed_invalid_changes_cannot_persist(tmp_
             before = {row.key: row.value for row in session.query(Setting)}
             change_count = session.query(AssistantChange).count()
         browser_only = [item for item in get_settings_catalog() if not item.assistant_writable]
-        assert len(browser_only) == 26
+        assert len(browser_only) == 27
         for item in browser_only:
             wire.expect_error("shortlist_plan_configuration", {"values": {item.key: item.default, "row.size": 20}})
             wire.expect_error("shortlist_plan_configuration", {"resets": [item.key]})

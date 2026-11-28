@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   SOURCES,
   aiInstructionsInert,
+  hasKeenable,
   hasSearxng,
   hasWebSearch,
   sourceBlockedReason,
@@ -157,5 +158,37 @@ describe("aiInstructionsInert: whether anything reads a row's AI instructions", 
     ["SearXNG, Ollama", { ...OLLAMA, "llm_web.search_provider": "searxng" }, null],
   ] as const)("%s → %s", (_label, values, expected) => {
     expect(aiInstructionsInert(settings(values as Record<string, string>))).toBe(expected);
+  });
+});
+
+describe("Keenable as the chosen backend", () => {
+  const KEENABLE = { "llm_web.search_provider": "keenable" };
+
+  it("is ready once chosen, with no key, because it searches keyless", () => {
+    expect(hasKeenable(settings({}))).toBe(false);
+    expect(hasKeenable(settings({ "keenable.apikey": "•••••" }))).toBe(false); // a key alone selects nothing
+    expect(hasKeenable(settings(KEENABLE))).toBe(true);
+  });
+
+  it("requires an AI provider, because Keenable only returns snippets", () => {
+    expect(hasWebSearch(settings({ ...KEENABLE, ...CLAUDE }))).toBe(true);
+    expect(hasWebSearch(settings({ ...KEENABLE, ...OLLAMA }))).toBe(true);
+    expect(hasWebSearch(settings(KEENABLE))).toBe(false);
+  });
+
+  it("does not let another backend's setup satisfy it, or the reverse", () => {
+    expect(hasWebSearch(settings({ ...OLLAMA, ...EXA, ...SEARX }))).toBe(false);
+    expect(
+      hasWebSearch(settings({ ...OLLAMA, ...EXA, "llm_web.search_provider": "keenable" })),
+    ).toBe(true);
+  });
+
+  it("names the missing AI provider when Keenable has no model to read its results", () => {
+    expect(sourceBlockedReason(LLM_WEB, settings(KEENABLE))).toMatch(/AI provider to read Keenable/);
+  });
+
+  it("is a backend the AI instructions do act on once a provider exists", () => {
+    expect(aiInstructionsInert(settings({ ...KEENABLE, ...OLLAMA }))).toBeNull();
+    expect(aiInstructionsInert(settings(KEENABLE))).toBe("no_provider");
   });
 });

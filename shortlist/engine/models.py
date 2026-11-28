@@ -1460,7 +1460,7 @@ class EngineConfig:
     # preserving legacy behaviour; owners widen recall by enabling more.
     candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])
     # Which backend the llm_web source searches with — exactly one: 'native' (the provider's own
-    # web-search tool, Claude/GPT/Gemini only), 'exa', or 'searxng'. Either external is the only path
+    # web-search tool, Claude/GPT/Gemini only), 'exa', 'searxng' or 'keenable'. Any external is the only path
     # for a local Ollama model.
     web_search_provider: str = "native"
     # Server-wide AI web search instructions (#138); "" = Shortlist's built-in guidance.

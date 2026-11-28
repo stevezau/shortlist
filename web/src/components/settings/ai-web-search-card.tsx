@@ -3,6 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   hasCurator,
   hasExa,
+  hasKeenable,
   hasNativeWebSearch,
   hasSearxng,
   webSearchProvider,
@@ -14,12 +15,14 @@ const BACKEND_LABELS: Record<string, string> = {
   native: "your AI provider’s own search",
   exa: "Exa",
   searxng: "your SearXNG instance",
+  keenable: "Keenable",
 };
 
 /** Whether the chosen backend is actually set up, mirroring `make_search_client` on the server. */
 function backendReady(backend: string, settings: Settings): boolean {
   if (backend === "exa") return hasExa(settings);
   if (backend === "searxng") return hasSearxng(settings);
+  if (backend === "keenable") return hasKeenable(settings);
   return hasNativeWebSearch(settings);
 }
 
@@ -32,13 +35,13 @@ function backendReady(backend: string, settings: Settings): boolean {
  *  and being billed for. */
 function missing(backend: string, settings: Settings): string | null {
   if (!hasCurator(settings) && backend !== "exa")
-    return backend === "searxng"
-      ? "This also needs an AI provider: SearXNG returns raw web snippets, and something has to read them to find the titles."
+    return backend === "searxng" || backend === "keenable"
+      ? `This also needs an AI provider: ${backend === "keenable" ? "Keenable" : "SearXNG"} returns raw web snippets, and something has to read them to find the titles.`
       : "This also needs an AI provider — the search runs inside it.";
   if (backendReady(backend, settings)) return null;
   if (backend === "exa") return "No Exa API key is saved yet.";
   if (backend === "searxng") return "No SearXNG address is saved yet.";
-  return "Your AI provider can’t search the web on its own — only Claude, GPT and Gemini can. Switch the search backend to Exa or SearXNG, or change provider.";
+  return "Your AI provider can’t search the web on its own — only Claude, GPT and Gemini can. Switch the search backend to Exa, SearXNG or Keenable, or change provider.";
 }
 
 /**
@@ -150,6 +153,14 @@ export function AiWebSearchCard({
                   Exa&rsquo;s free tier covers roughly 1,000 searches a month —
                   plenty for a small server. A large server, or a high recent
                   count, may need a paid Exa plan.
+                </p>
+              )}
+              {backend === "keenable" && (
+                <p>
+                  Keenable works without a key but is rate limited per IP, and a
+                  key lifts that limit. Each search sends a query built from a
+                  recent watch, which Keenable logs along with the IP address,
+                  with or without a key.
                 </p>
               )}
               {backend === "searxng" && (

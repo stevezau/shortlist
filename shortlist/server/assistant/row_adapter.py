@@ -408,6 +408,8 @@ class RowAdapter:
                     search = store.get("llm_web.search_provider")
                     if search == "exa":
                         destinations.add("https://api.exa.ai")
+                    elif search == "keenable":
+                        destinations.add("https://api.keenable.ai")
                     elif search == "searxng" and store.get("searxng.url"):
                         destinations.add(str(store.get("searxng.url")).rstrip("/"))
             request_auto_send = final_values.get("req_auto_send")

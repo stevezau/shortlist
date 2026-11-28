@@ -182,7 +182,7 @@ def _web_system(
 
 
 def web_system_prompt(backend: str, *, k: int, year: int, guidance: Guidance | None) -> str:
-    """The system prompt AI web search sends for ``backend`` ("native", "exa", "searxng").
+    """The system prompt AI web search sends for ``backend`` ("native", "exa", "searxng", "keenable").
 
     Exa is shown with its pick prompt, the one used whenever Exa extracts titles. An unknown backend is
     treated as native, as ``web_recommendations`` does.
@@ -280,7 +280,7 @@ _WEB_PICK = _WebPrompt(
     count="Pick up to {k} of them. ",
 )
 
-_PROMPT_FOR_BACKEND = {"native": _WEB, "exa": _WEB_PICK, "searxng": _WEB_RAG}
+_PROMPT_FOR_BACKEND = {"native": _WEB, "exa": _WEB_PICK, "searxng": _WEB_RAG, "keenable": _WEB_RAG}
 
 
 def build_web_query_for_title(title: str) -> str:

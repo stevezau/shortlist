@@ -89,9 +89,9 @@ _WEB_SEARCH_CACHE_PREFIX = "websearch2"
 # is simply ignored by ``gather_candidates``, but the API validates against this set for good errors.
 KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "trakt", "llm_web")
 # `web_search_mode` values that mean "search through the external backend the context carries". The
-# engine deliberately does NOT distinguish Exa from SearXNG: which client to build is the server's
+# engine deliberately does NOT distinguish Exa, SearXNG and Keenable: which client to build is the server's
 # decision (context_builder), and every provider looks the same through `WebSearchProvider`.
-EXTERNAL_SEARCH_MODES = ("exa", "searxng")
+EXTERNAL_SEARCH_MODES = ("exa", "searxng", "keenable")
 DEFAULT_SOURCES = ("tmdb_similar",)
 _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
 # How many titles the web-search LLM proposes (each resolved to TMDB, then verified). Derived from
@@ -205,7 +205,7 @@ def web_recommendations(
     ``mode`` names the ONE backend to search with:
 
     * ``native`` — the provider's own web-search tool (Claude/GPT/Gemini only).
-    * ``exa`` / ``searxng`` — the external backend the server built for us. Identical branches here;
+    * ``exa`` / ``searxng`` / ``keenable`` — the external backend the server built for us. Identical branches here;
       which client it is was decided in ``context_builder.make_search_client``. Either is the only
       path for a local Ollama model, which has no web search of its own.
 

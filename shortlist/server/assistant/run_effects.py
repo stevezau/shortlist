@@ -34,13 +34,17 @@ def paid_effect_contract(config, store, intent, *, config_hash, configured: bool
     if web:
         if not configured and intent.max_provider_calls == 0:
             raise ChangeError("budget_exceeded", "AI generation and search require an explicit provider-call budget.")
-        if mode in {"exa", "searxng"}:
+        if mode in {"exa", "searxng", "keenable"}:
             if mode == "exa":
                 if not store.get("exa.apikey"):
                     raise ChangeError("invalid_selection", "Configure the selected Exa connection before a paid run.")
                 search_type = str(store.get("exa.search_type") or DEFAULT_EXA_SEARCH_TYPE)
                 search_type = search_type if search_type in EXA_SEARCH_TYPES else DEFAULT_EXA_SEARCH_TYPE
                 append("external_search", "exa", "https://api.exa.ai", search_type)
+            elif mode == "keenable":
+                append("external_search", "keenable", "https://api.keenable.ai")
+                if provider in {"none", "null", ""}:
+                    raise ChangeError("invalid_selection", "Keenable recommendations also require a configured model.")
             else:
                 append("external_search", "searxng", service_destination(str(store.get("searxng.url") or "")))
                 if provider in {"none", "null", ""}:
@@ -64,7 +68,7 @@ def paid_effect_contract(config, store, intent, *, config_hash, configured: bool
             )
             if not model:
                 raise ChangeError("invalid_selection", "The configured provider has no bounded model contract.")
-            kind = "completion" if mode in {"exa", "searxng"} else "native_search"
+            kind = "completion" if mode in {"exa", "searxng", "keenable"} else "native_search"
             if kind == "native_search" and provider == "openai_compatible":
                 raise ChangeError(
                     "invalid_selection", "Compatible providers require a configured external search backend."

@@ -18,6 +18,10 @@ describe("history mix presets", () => {
 });
 
 describe("mixModeLine", () => {
+  it("says Keenable searches are cached a week", () => {
+    expect(mixModeLine({ "llm_web.search_provider": "keenable" })).toMatch(/one more Keenable search, cached a week/);
+  });
+
   it("says nothing while settings load", () => {
     expect(mixModeLine(undefined)).toBeNull();
   });

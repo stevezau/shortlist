@@ -153,6 +153,9 @@ class TestBuiltinPromptsAreByteIdentical:
         assert web_system_prompt("native", k=40, year=2026, guidance=None) == EXPECTED_NATIVE_2026_K40
         assert web_system_prompt("searxng", k=40, year=2026, guidance=None) == EXPECTED_RAG_K40
         assert web_system_prompt("exa", k=40, year=2026, guidance=None) == EXPECTED_PICK_K40
+        assert (
+            web_system_prompt("keenable", k=40, year=2026, guidance=None) == EXPECTED_RAG_K40
+        )  # snippets, like SearXNG
 
 
 class TestOwnerGuidance:

@@ -317,6 +317,12 @@ describe("plain-English trace helpers", () => {
     );
   });
 
+  it("webMechanism names Keenable when that is the backend that ran", () => {
+    expect(webMechanism("keenable", true)).toMatch(
+      /searched the web with Keenable/,
+    );
+  });
+
   it("webMechanism trusts the recorded provider over the mode under auto", () => {
     // `auto` means "native plus whichever external is configured" — the mode alone cannot say which
     // one ran, so the run records it. Without this the trace would claim Exa on a SearXNG-only server.

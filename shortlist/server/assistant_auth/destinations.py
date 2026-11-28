@@ -89,6 +89,8 @@ def configured_destinations(session: Session) -> list[ConfiguredDestination]:
         if url and _has_secret(session, credential):
             with suppress(ValueError):
                 add(service_id, label, ["connection check"], service_destination(url))
+    if store.get("llm_web.search_provider") == "keenable":
+        add("keenable", "Keenable search", ["search"], "https://api.keenable.ai")
     if store.get("searxng.url"):
         with suppress(ValueError):
             add("searxng", "SearXNG search", ["search"], service_destination(str(store.get("searxng.url"))))

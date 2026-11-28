@@ -382,7 +382,7 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"llm_web.search_provider": "bogus"}}).status_code == 422
         # "auto" was a real value until 1.3; it must now be refused like any other unknown one.
         assert client.put("/api/settings", json={"values": {"llm_web.search_provider": "auto"}}).status_code == 422
-        for mode in ("native", "exa", "searxng"):
+        for mode in ("native", "exa", "searxng", "keenable"):
             assert client.put("/api/settings", json={"values": {"llm_web.search_provider": mode}}).status_code == 200
 
     def test_log_level_is_validated_and_applied(self, client: TestClient):
@@ -835,6 +835,38 @@ class TestSettingsApi:
         ok = client.post("/api/settings/test/searxng").json()
         assert ok["ok"] is True and "SearXNG responded" in ok["message"]
         assert set(no_url) == {"ok", "message"} and set(ok) == {"ok", "message"}
+
+    def test_keenable_test_connection_works_with_and_without_a_key(self, client: TestClient, monkeypatch):
+        pinged: list[str] = []
+
+        def _ping(self):
+            pinged.append(self._api_key)
+            return "Keenable ok"
+
+        monkeypatch.setattr("shortlist.engine.clients.search.KeenableClient.ping", _ping)
+        assert client.post("/api/settings/test/keenable").json() == {"ok": True, "message": "Keenable ok"}
+        client.put("/api/settings", json={"values": {"keenable.apikey": "kn-key"}})
+        assert client.post("/api/settings/test/keenable").json()["ok"] is True
+        assert pinged == ["", "kn-key"]
+
+    def test_keenable_test_connection_reports_a_rejected_key_without_the_key(self, client: TestClient, monkeypatch):
+        client.put("/api/settings", json={"values": {"keenable.apikey": "kn-secret"}})
+
+        def _raise(self):
+            raise RuntimeError("Keenable rejected the API key (HTTP 401) — check it is current.")
+
+        monkeypatch.setattr("shortlist.engine.clients.search.KeenableClient.ping", _raise)
+        body = client.post("/api/settings/test/keenable").json()
+        assert body["ok"] is False and "rejected the API key" in body["message"]
+        assert "kn-secret" not in body["message"]
+
+    def test_the_keenable_key_is_encrypted_at_rest_and_redacted_in_the_api(self, client: TestClient):
+        from shortlist.server.settings_store import SettingsStore
+
+        client.put("/api/settings", json={"values": {"keenable.apikey": "kn-secret"}})
+        assert client.get("/api/settings").json()["keenable.apikey"] == "•••••"
+        with client.app.state.sessions() as session:
+            assert SettingsStore(session, client.app.state.secrets).get("keenable.apikey") == "kn-secret"
 
     def test_searxng_json_misconfiguration_reaches_the_owner_verbatim(self, client: TestClient, monkeypatch):
         """The 403-means-enable-JSON message is the whole point of the probe — it must survive the

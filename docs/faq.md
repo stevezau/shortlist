@@ -100,10 +100,11 @@ The optional web-search source can search in three ways, and you pick one in
 | Your AI provider's own search (default) | Claude, GPT, Gemini only       | no extra signup; unavailable on local models              |
 | **[Exa](https://exa.ai) key**       | **every provider, local included** | one extra free-tier signup; billed per search             |
 | **[SearXNG](https://docs.searxng.org)** | **every provider, local included** | free and fully self-hosted; you run and maintain it    |
+| **[Keenable](https://docs.keenable.ai)** | **every provider, local included** | hosted; works without a key, rate limited per IP; logs queries and IPs |
 
-The two external backends are the only options a local model can use, because an Ollama or LM Studio
+The external backends are the only options a local model can use, because an Ollama or LM Studio
 server on your own hardware cannot reach the internet by itself. They also keep your results the same
-when you switch AI providers. [AI and cost](guides/ai.md#exa-or-searxng) compares the two and
+when you switch AI providers. [AI and cost](guides/ai.md#exa-searxng-or-keenable) compares them and
 covers the one SearXNG setting you have to turn on.
 
 It's genuinely optional. Leave it empty and everything still works. You would just be limited to your

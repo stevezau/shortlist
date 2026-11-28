@@ -961,6 +961,12 @@ class TestWebSearchWithoutAnLlm:
     def test_searxng_with_a_model_is_capable(self):
         assert _web_search_capable(_NonNativeCurator("[]"), _FakeSearch([], name="searxng"), "searxng") is True
 
+    def test_keenable_needs_a_model_like_searxng_because_it_returns_snippets_only(self):
+        keenable = _FakeSearch([], name="keenable")
+        assert _web_search_capable(NullCurator(), keenable, "keenable") is False
+        assert _web_search_capable(_NonNativeCurator("[]"), keenable, "keenable") is True
+        assert _web_search_capable(NullCurator(), None, "keenable") is False
+
     def test_the_trace_records_why_the_model_was_skipped(self):
         search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
         stats = GatherStats()

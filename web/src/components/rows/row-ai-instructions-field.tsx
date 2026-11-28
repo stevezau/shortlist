@@ -23,6 +23,7 @@ const PREVIEW_FOOTNOTES: Record<string, string> = {
   native: "Then the person's 20 most recent watches are added.",
   exa: "Then the person's 20 most recent watches and the titles Exa found are added.",
   searxng: "Then the person's 20 most recent watches and excerpts from the articles found are added.",
+  keenable: "Then the person's 20 most recent watches and excerpts from the articles found are added.",
 };
 
 /** Native search also ends its user message by asking for recent releases, unless guidance replaces the default. */
@@ -43,13 +44,16 @@ function backendNote(backend: string, inert: AiInstructionsInert): string | null
       : "AI web search needs an AI provider, so these instructions have no effect yet. Add one in Settings → Connections.";
   }
   if (inert === "no_native_search") {
-    return "Your AI provider can't search the web itself, so these instructions have no effect. Choose Exa or SearXNG in Settings → Connections.";
+    return "Your AI provider can't search the web itself, so these instructions have no effect. Choose Exa, SearXNG or Keenable in Settings → Connections.";
   }
   if (backend === "exa") {
     return "You search with Exa, a web-search service. Exa's searches start from each person's recent watches and are shared between people, so these instructions decide which of Exa's titles the AI keeps, not what Exa looks for.";
   }
   if (backend === "searxng") {
     return "You search with SearXNG, a self-hosted search engine. Its results start from each person's recent watches; these instructions decide which titles the AI picks from them.";
+  }
+  if (backend === "keenable") {
+    return "You search with Keenable, a hosted web-search API. Its results start from each person's recent watches; these instructions decide which titles the AI picks from them.";
   }
   return null;
 }
@@ -69,7 +73,7 @@ export function RowAiInstructionsField({
   onChange: (next: AiInstructions) => void;
   /** Short names of the row's other sources, none of which read these instructions. */
   otherSources: string[];
-  /** `llm_web.search_provider`: "native", "exa" or "searxng". */
+  /** `llm_web.search_provider`: "native", "exa", "searxng" or "keenable". */
   backend: string;
   /** Why nothing reads the instructions under the current settings, or null when the AI does. */
   inert: AiInstructionsInert;

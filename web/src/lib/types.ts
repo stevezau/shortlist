@@ -895,7 +895,7 @@ export interface TraceWebProposal {
 /** The web-search (llm_web) detail of a gather: what was searched and what the LLM proposed. */
 export interface TraceWeb {
   mode: string;
-  /** Which external backend actually ran ("exa" | "searxng"). Absent when the native tool did the
+  /** Which external backend actually ran ("exa" | "searxng" | "keenable"). Absent when the native tool did the
    *  searching, and on runs recorded before the trace carried it. Under `mode: "auto"` this is the
    *  only thing that says which of the two externals was used. */
   provider?: string;
@@ -1051,6 +1051,7 @@ export type TestableService =
   | "trakt"
   | "exa"
   | "searxng"
+  | "keenable"
   | "native_search"
   // Not a ping like the rest: it really posts a test message to the owner's webhook, deliberately, so
   // the button exercises the same path a failed run does.
